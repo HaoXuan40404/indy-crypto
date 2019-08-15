@@ -62,3 +62,5 @@ extern crate lazy_static;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
+
+extern crate colored;

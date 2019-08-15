@@ -17,6 +17,8 @@ use pair::*;
 
 use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
 use std::hash::Hash;
+use colored::*;
+use std::io;
 
 /// Creates random nonce
 ///
@@ -1556,4 +1558,172 @@ mod test {
                                              Some(&rev_reg)).unwrap();
         assert_eq!(true, proof_verifier.verify(&proof, &proof_request_nonce).unwrap());
     }
+#[test]
+    fn demo_cl_use() {
+        println!("{}", "Indy demo展示开始".green());
+        pause();
+        println!("{}", "Issuer生成公开信息属性模板".green());
+        println!("{}", "公开信息模板中填写的信息对Issuer可见，但对verifier不可见".red());
+        println!("{}", "属性模板包含name，sex，age，height".green());
+        let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
+        credential_schema_builder.add_attr("name").unwrap();
+        credential_schema_builder.add_attr("sex").unwrap();
+        credential_schema_builder.add_attr("age").unwrap();
+        credential_schema_builder.add_attr("height").unwrap();
+        let credential_schema = credential_schema_builder.finalize().unwrap();
+        print!("{}", "公开信息属性模板credential_schema = ".yellow());
+        println!("{:?}", credential_schema);
+        pause();
+
+        println!("{}", "Issuer生成隐私信息属性模板".green());
+        println!("{}", "隐私信息属性模板包含用户master_secret key".green());
+        println!("{}", "信息信息模板中填写的信息对Issuer和Verifier不可见".red());
+        let mut non_credential_schema_builder = NonCredentialSchemaBuilder::new().unwrap();
+        non_credential_schema_builder.add_attr("master_secret").unwrap();
+        let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
+        print!("{}", "隐私信息属性模板non_credential_schema = ".yellow());
+        println!("{:?}", non_credential_schema);
+        pause();
+
+        println!("{}", "Issuer生成公私钥及关于信息属性凭证模板的证明".green());
+        println!("{}", "注意，此步耗时较长".red());
+        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
+        print!("{}", "公钥cred_pub_key = ".yellow());
+        println!("{:?}", cred_pub_key);
+        print!("{}", "私钥cred_priv_key = ".yellow());
+        println!("{:?}", cred_priv_key);
+        print!("{}", "证明cred_key_correctness_proof = ".yellow());
+        println!("{:?}", cred_key_correctness_proof);
+        println!("{}", "Issuer将公钥cred_pub_key，证明cred_key_correctness_proof，属性凭证模板公开".green());
+        pause();
+
+        println!("{}", "Prover(Holder, User)根据模板填写自己的信息".green());
+        // println!("{}", "Prover(Holder, User)生成master_secret".green());
+        let master_secret = Prover::new_master_secret().unwrap();
+        print!("{}", "master_secret = ".yellow());
+        println!("{:?}", master_secret);
+        println!("{}", "Prover生成nonce".green());
+        let credential_nonce = new_nonce().unwrap();
+        print!("{}", "随机数credential_nonce = ".yellow());
+        println!("{:?}", credential_nonce);
+
+        println!("{}", "Prover为属性模板添加值".green());
+        let mut credential_values_builder = Issuer::new_credential_values_builder().unwrap();
+        credential_values_builder.add_value_hidden("master_secret", &master_secret.value().unwrap()).unwrap();
+        credential_values_builder.add_dec_known("name", "1139481716457488690172217916278103335").unwrap();
+        credential_values_builder.add_dec_known("sex", "5944657099558967239210949258394887428692050081607692519917050011144233115103").unwrap();
+        credential_values_builder.add_dec_known("age", "28").unwrap();
+        credential_values_builder.add_dec_known("height", "175").unwrap();
+        let cred_values = credential_values_builder.finalize().unwrap();
+        print!("{}", "添加后的对应结果cred_values = ".yellow());
+        println!("{:?}", cred_values);
+        pause();
+
+        println!("{}", "Prover生成隐藏属性，随机数与属性证明".green());
+        let (blinded_credential_secrets, credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof) =
+            Prover::blind_credential_secrets(&cred_pub_key,
+                                        &cred_key_correctness_proof,
+                                        &cred_values,
+                                        &credential_nonce).unwrap();
+        print!("{}", "隐藏属性承诺blinded_credential_secrets = ".yellow());
+        println!("{:?}", blinded_credential_secrets);
+        print!("{}", "隐藏属性随机数credential_secrets_blinding_factors = ".yellow());
+        println!("{:?}", credential_secrets_blinding_factors);
+        print!("{}", "隐藏属性证明blinded_credential_secrets_correctness_proof = ".yellow());
+        println!("{:?}", blinded_credential_secrets_correctness_proof);
+        println!("{}", "Prover将隐藏属性承诺blinded_credential_secrets、隐藏属性证明blinded_credential_secrets_correctness_proof发送给Issuer，等待其签名".green());
+        pause();
+
+        println!("{}", "Issuer收到隐藏属性承诺、证明后对其进行验证，并生成新的随机数，对其签名".green());
+        let cred_issuance_nonce = new_nonce().unwrap();
+        print!("{}", "随机数cred_issuance_nonce = ".yellow());
+        println!("{:?}", cred_issuance_nonce);
+        let (mut cred_signature, signature_correctness_proof) = Issuer::sign_credential("CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW",
+                                                                                        &blinded_credential_secrets,
+                                                                                        &blinded_credential_secrets_correctness_proof,
+                                                                                        &credential_nonce,
+                                                                                        &cred_issuance_nonce,
+                                                                                        &cred_values,
+                                                                                        &cred_pub_key,
+                                                                                        &cred_priv_key).unwrap();
+        print!("{}", "签名cred_signature = ".yellow());
+        println!("{:?}", cred_signature);
+        print!("{}", "证明signature_correctness_proof = ".yellow());
+        println!("{:?}", signature_correctness_proof);
+        println!("{}", "Issuer将签名cred_signature和证明signature_correctness_proof发送给Prover(Holder)".green());
+        pause();
+
+        println!("{}", "Prover用公钥cred_pub_key和随机数cred_issuance_nonce对签名cred_signature和证明signature_correctness_proof进行验证，并生成偏移后的签名cred_signature".green());
+        Prover::process_credential_signature(&mut cred_signature,
+                                             &cred_values,
+                                             &signature_correctness_proof,
+                                             &credential_secrets_blinding_factors,
+                                             &cred_pub_key,
+                                             &cred_issuance_nonce,
+                                             None,
+                                             None,
+                                             None).unwrap();
+        print!("{}", "偏移后的cred_signature = ".yellow());
+        println!("{:?}", cred_signature);
+        println!("{}", "Prover将偏移后的签名cred_signature和证明signature_correctness_proof存储下来，所谓自己的证书".green());
+        println!("{}", "至此，证书签发流程结束".red());
+        pause();
+
+        println!("{}", "选择性披露验证流程开始".red());
+        println!("{}", "Verifier试图验证Prover对于年龄大于18岁的事实是否正确，生成验证模板sub_proof_request".green());
+        let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
+        sub_proof_request_builder.add_revealed_attr("name").unwrap();
+        sub_proof_request_builder.add_predicate("age", "GE", 18).unwrap();
+        let sub_proof_request = sub_proof_request_builder.finalize().unwrap();
+        print!("{}", "验证模板sub_proof_request = ".yellow());
+        println!("{:?}", sub_proof_request);
+        println!("{}", " Verifier发送验证条件sub_proof_request给Prover".green());
+        pause();
+
+        println!("{}", "Prover对验证模板sub_proof_request生成证明".green());
+        let mut proof_builder = Prover::new_proof_builder().unwrap();
+        proof_builder.add_common_attribute("master_secret").unwrap();
+
+        // println!("{}", "Prover对验证条件生成证明".green());
+        proof_builder.add_sub_proof_request(&sub_proof_request,
+                                            &credential_schema,
+                                            &non_credential_schema,
+                                            &cred_signature,
+                                            &cred_values,
+                                            &cred_pub_key,
+                                            None,
+                                            None).unwrap();
+        print!("{}", "proof_builder = ".yellow());
+        println!("{:?}", proof_builder);
+        
+        let proof_request_nonce = new_nonce().unwrap();
+        print!("{}", "Prover生成随机数proof_request_nonce = ".yellow());
+        pause();
+        println!("{:?}", proof_request_nonce);
+        let proof = proof_builder.finalize(&proof_request_nonce).unwrap();
+        print!("{}", "Prover使用属性模板schema、验证条件sub_proof_request、Issuer公钥cred_pub_key生成证明 proof = ".yellow());
+        println!("{:?}", proof);
+        println!("{}", "Prover发送证明proof给Verifier".green());
+        pause();
+
+        println!("{}", "Verifier选择验证条件sub_proof_request、属性模板shcema、Issuer公钥cred_pub_key，验证Prover对于年龄大于18岁的事实是否正确".green());
+        let mut proof_verifier = Verifier::new_proof_verifier().unwrap();
+        proof_verifier.add_sub_proof_request(&sub_proof_request,
+                                             &credential_schema,
+                                             &non_credential_schema,
+                                             &cred_pub_key,
+                                             None,
+                                             None).unwrap();
+        assert!(proof_verifier.verify(&proof, &proof_request_nonce).unwrap());
+        println!("{}", "验证断言Prover年龄大于18岁成功!".green());
+        pause();
+        println!("{}", "Indy demo展示结束".green());
+    }
+}
+
+fn pause() {
+    let mut enter_continue = String::new();
+    println!("{}", "Press any key to continue...".green());
+    io::stdin().read_line(&mut enter_continue).expect("Failed to read line.");
+    println!("continued! {}\n", enter_continue.trim());
 }
