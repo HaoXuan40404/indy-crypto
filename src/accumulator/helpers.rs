@@ -287,112 +287,6 @@ pub fn get_mtilde(unrevealed_attrs: &HashSet<String>, mtilde: &mut HashMap<Strin
     Ok(())
 }
 
-pub fn calc_teq(p_pub_key: &CredentialPrimaryPublicKey,
-                a_prime: &BigNumber,
-                e: &BigNumber,
-                v: &BigNumber,
-                m_tilde: &HashMap<String, BigNumber>,
-                m2tilde: &BigNumber,
-                unrevealed_attrs: &HashSet<String>) -> Result<BigNumber, IndyCryptoError> {
-    trace!("Helpers::calc_teq: >>> p_pub_key: {:?}, p_pub_key: {:?}, e: {:?}, v: {:?}, m_tilde: {:?}, m2tilde: {:?}, \
-    unrevealed_attrs: {:?}", p_pub_key, a_prime, e, v, m_tilde, m2tilde, unrevealed_attrs);
-
-    let mut ctx = BigNumber::new_context()?;
-    let mut result: BigNumber = a_prime
-        .mod_exp(&e, &p_pub_key.n, Some(&mut ctx))?;
-
-    for k in unrevealed_attrs.iter() {
-        let cur_r = p_pub_key.r.get(k)
-            .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in pk.r", k)))?;
-        let cur_m = m_tilde.get(k)
-            .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in m_tilde", k)))?;
-
-        result = cur_r
-            .mod_exp(&cur_m, &p_pub_key.n, Some(&mut ctx))?
-            .mod_mul(&result, &p_pub_key.n, Some(&mut ctx))?;
-    }
-
-    result = p_pub_key.s
-        .mod_exp(&v, &p_pub_key.n, Some(&mut ctx))?
-        .mod_mul(&result, &p_pub_key.n, Some(&mut ctx))?;
-
-    result = p_pub_key.rctxt
-        .mod_exp(&m2tilde, &p_pub_key.n, Some(&mut ctx))?
-        .mod_mul(&result, &p_pub_key.n, Some(&mut ctx))?;
-
-    trace!("Helpers::calc_teq: <<< t: {:?}", result);
-
-    Ok(result)
-}
-
-pub fn calc_tne(p_pub_key: &CredentialPrimaryPublicKey,
-                u: &HashMap<String, BigNumber>,
-                r: &HashMap<String, BigNumber>,
-                mj: &BigNumber,
-                alpha: &BigNumber,
-                t: &HashMap<String, BigNumber>,
-                is_less: bool) -> Result<Vec<BigNumber>, IndyCryptoError> {
-    trace!("Helpers::calc_tge: >>> p_pub_key: {:?}, u: {:?}, r: {:?}, mj: {:?}, alpha: {:?}, t: {:?}", p_pub_key, u, r, mj, alpha, t);
-
-    let mut tau_list: Vec<BigNumber> = Vec::new();
-    let mut ctx = BigNumber::new_context()?;
-
-    for i in 0..ITERATION {
-        let cur_u = u.get(&i.to_string())
-            .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in u", i)))?;
-        let cur_r = r.get(&i.to_string())
-            .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in r", i)))?;
-
-        let t_tau = p_pub_key.z
-            .mod_exp(&cur_u, &p_pub_key.n, Some(&mut ctx))?
-            .mod_mul(
-                &p_pub_key.s.mod_exp(&cur_r, &p_pub_key.n, Some(&mut ctx))?,
-                &p_pub_key.n, Some(&mut ctx),
-            )?;
-
-        tau_list.push(t_tau);
-    }
-
-    let delta = r.get("DELTA")
-        .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in r", "DELTA")))?;
-    let delta_predicate = if is_less {
-        delta.set_negative(true)?
-    } else {
-        delta.clone()?
-    };
-
-    let t_tau = p_pub_key.z
-        .mod_exp(&mj, &p_pub_key.n, Some(&mut ctx))?
-        .mod_mul(
-            &p_pub_key.s.mod_exp(&delta_predicate, &p_pub_key.n, Some(&mut ctx))?,
-            &p_pub_key.n, Some(&mut ctx),
-        )?;
-
-    tau_list.push(t_tau);
-
-    let mut q: BigNumber = BIGNUMBER_1.clone()?;
-
-    for i in 0..ITERATION {
-        let cur_t = t.get(&i.to_string())
-            .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in t", i)))?;
-        let cur_u = u.get(&i.to_string())
-            .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in u", i)))?;
-
-        q = cur_t
-            .mod_exp(&cur_u, &p_pub_key.n, Some(&mut ctx))?
-            .mul(&q, Some(&mut ctx))?;
-    }
-
-    q = p_pub_key.s
-        .mod_exp(&alpha, &p_pub_key.n, Some(&mut ctx))?
-        .mod_mul(&q, &p_pub_key.n, Some(&mut ctx))?;
-
-    tau_list.push(q);
-
-    trace!("Helpers::calc_tne: <<< tau_list: {:?}", tau_list);
-
-    Ok(tau_list)
-}
 
 fn largest_square_less_than(delta: usize) -> usize {
     (delta as f64).sqrt().floor() as usize
@@ -461,19 +355,18 @@ pub fn bignum_to_group_element(num: &BigNumber) -> Result<GroupOrderElement, Ind
     Ok(GroupOrderElement::from_bytes(&num.to_bytes()?)?)
 }
 
-pub fn create_tau_list_expected_values(r_pub_key: &CredentialRevocationPublicKey,
-                                       rev_reg: &RevocationRegistry,
-                                       rev_acc_pub_key: &RevocationKeyPublic,
-                                       proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
-    trace!("Helpers::create_tau_list_expected_values: >>> r_pub_key: {:?}, rev_reg: {:?}, rev_acc_pub_key: {:?}, proof_c: {:?}",
-           r_pub_key, rev_reg, rev_acc_pub_key, proof_c);
+pub fn create_tau_list_expected_val(r_pub_key: &CredentialRevocationPublicKey,
+                                    accumulator_public: &AccumulatorPublic,
+                                    proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
+    trace!("Helpers::create_tau_list_expected_values: >>> r_pub_key: {:?}, accumulator_public: {:?},   proof_c: {:?}",
+           r_pub_key, accumulator_public, proof_c);
 
     let t1 = proof_c.e;
     let t2 = PointG1::new_inf()?;
     let t3 = Pair::pair(&r_pub_key.h0.add(&proof_c.g)?, &r_pub_key.h_cap)?
         .mul(&Pair::pair(&proof_c.a, &r_pub_key.y)?.inverse()?)?;
-    let t4 = Pair::pair(&proof_c.g, &rev_reg.accum)?
-        .mul(&Pair::pair(&r_pub_key.g, &proof_c.w)?.mul(&rev_acc_pub_key.z)?.inverse()?)?;
+    let t4 = Pair::pair(&proof_c.g, &accumulator_public.accumulator)?
+        .mul(&Pair::pair(&r_pub_key.g, &proof_c.w)?.mul(&accumulator_public.accu_pub_key.z)?.inverse()?)?;
     let t5 = proof_c.d;
     let t6 = PointG1::new_inf()?;
     let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &proof_c.s)?
@@ -498,84 +391,48 @@ pub fn create_tau_list_expected_values(r_pub_key: &CredentialRevocationPublicKey
 }
 
 
-pub fn createTauListExpectedValues(r_pub_key: &CredentialRevocationPublicKey,
-                                   accumulatorPublic: &AccumulatorPublic,
-                                   proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
-    trace!("Helpers::create_tau_list_expected_values: >>> r_pub_key: {:?}, accumulatorPublic: {:?},   proof_c: {:?}",
-           r_pub_key, accumulatorPublic, proof_c);
+pub fn get_tau_list(r_pub_key: &CredentialRevocationPublicKey,
+                    accumulator_public: &AccumulatorPublic,
+                    non_revoc_proof_xlist: &NonRevocProofXList,
+                    proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
+    trace!("Helpers::create_tau_list_values: >>> r_pub_key: {:?}, accumulator_public: {:?}, non_revoc_proof_xlist: {:?}, proof_c: {:?}",
+           r_pub_key, accumulator_public, non_revoc_proof_xlist, proof_c);
 
-    let t1 = proof_c.e;
-    let t2 = PointG1::new_inf()?;
-    let t3 = Pair::pair(&r_pub_key.h0.add(&proof_c.g)?, &r_pub_key.h_cap)?
-        .mul(&Pair::pair(&proof_c.a, &r_pub_key.y)?.inverse()?)?;
-    let t4 = Pair::pair(&proof_c.g, &accumulatorPublic.accumulator)?
-        .mul(&Pair::pair(&r_pub_key.g, &proof_c.w)?.mul(&accumulatorPublic.accu_pub_key.z)?.inverse()?)?;
-    let t5 = proof_c.d;
-    let t6 = PointG1::new_inf()?;
-    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &proof_c.s)?
-        .mul(&Pair::pair(&r_pub_key.g, &r_pub_key.g_dash)?.inverse()?)?;
-    let t8 = Pair::pair(&proof_c.g, &r_pub_key.u)?
-        .mul(&Pair::pair(&r_pub_key.g, &proof_c.u)?.inverse()?)?;
+    let t1 = r_pub_key.h.mul(&non_revoc_proof_xlist.rho)?.add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.o)?)?;
 
-    let non_revoc_proof_tau_list = NonRevocProofTauList {
-        t1,
-        t2,
-        t3,
-        t4,
-        t5,
-        t6,
-        t7,
-        t8,
-    };
-
-    trace!("Helpers::create_tau_list_expected_values: <<< non_revoc_proof_tau_list: {:?}", non_revoc_proof_tau_list);
-
-    Ok(non_revoc_proof_tau_list)
-}
-
-
-pub fn getTauList(r_pub_key: &CredentialRevocationPublicKey,
-                  accumulatorPublic: &AccumulatorPublic,
-                  nonRevocProofXList: &NonRevocProofXList,
-                  proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
-    trace!("Helpers::create_tau_list_values: >>> r_pub_key: {:?}, accumulatorPublic: {:?}, nonRevocProofXList: {:?}, proof_c: {:?}",
-           r_pub_key, accumulatorPublic, nonRevocProofXList, proof_c);
-
-    let t1 = r_pub_key.h.mul(&nonRevocProofXList.rho)?.add(&r_pub_key.htilde.mul(&nonRevocProofXList.o)?)?;
-
-    let mut t2 = proof_c.e.mul(&nonRevocProofXList.c)?
-        .add(&r_pub_key.h.mul(&nonRevocProofXList.m.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&nonRevocProofXList.t.mod_neg()?)?)?;
+    let mut t2 = proof_c.e.mul(&non_revoc_proof_xlist.c)?
+        .add(&r_pub_key.h.mul(&non_revoc_proof_xlist.m.mod_neg()?)?)?
+        .add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.t.mod_neg()?)?)?;
     if t2.is_inf()? {
         t2 = PointG1::new_inf()?;
     }
 
-    let t3 = Pair::pair(&proof_c.a, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.c)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.y)?.pow(&nonRevocProofXList.rho)?
-            .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m)?)?
-            .mul(&Pair::pair(&r_pub_key.h1, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m2)?)?
-            .mul(&Pair::pair(&r_pub_key.h2, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.s)?)?.inverse()?)?;
+    let t3 = Pair::pair(&proof_c.a, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.c)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r)?)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.y)?.pow(&non_revoc_proof_xlist.rho)?
+            .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.m)?)?
+            .mul(&Pair::pair(&r_pub_key.h1, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.m2)?)?
+            .mul(&Pair::pair(&r_pub_key.h2, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.s)?)?.inverse()?)?;
 
-    let t4 = Pair::pair(&r_pub_key.htilde, &accumulatorPublic.accumulator)?
-        .pow(&nonRevocProofXList.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime)?)?;
+    let t4 = Pair::pair(&r_pub_key.htilde, &accumulator_public.accumulator)?
+        .pow(&non_revoc_proof_xlist.r)?
+        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r_prime)?)?;
 
-    let t5 = r_pub_key.g.mul(&nonRevocProofXList.r)?.add(&r_pub_key.htilde.mul(&nonRevocProofXList.o_prime)?)?;
+    let t5 = r_pub_key.g.mul(&non_revoc_proof_xlist.r)?.add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.o_prime)?)?;
 
-    let mut t6 = proof_c.d.mul(&nonRevocProofXList.r_prime_prime)?
-        .add(&r_pub_key.g.mul(&nonRevocProofXList.m_prime.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&nonRevocProofXList.t_prime.mod_neg()?)?)?;
+    let mut t6 = proof_c.d.mul(&non_revoc_proof_xlist.r_prime_prime)?
+        .add(&r_pub_key.g.mul(&non_revoc_proof_xlist.m_prime.mod_neg()?)?)?
+        .add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.t_prime.mod_neg()?)?)?;
     if t6.is_inf()? {
         t6 = PointG1::new_inf()?;
     }
 
-    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime_prime)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m_prime.mod_neg()?)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &proof_c.s)?.pow(&nonRevocProofXList.r)?)?;
+    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r_prime_prime)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.m_prime.mod_neg()?)?)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &proof_c.s)?.pow(&non_revoc_proof_xlist.r)?)?;
 
-    let t8 = Pair::pair(&r_pub_key.htilde, &r_pub_key.u)?.pow(&nonRevocProofXList.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime_prime_prime)?)?;
+    let t8 = Pair::pair(&r_pub_key.htilde, &r_pub_key.u)?.pow(&non_revoc_proof_xlist.r)?
+        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r_prime_prime_prime)?)?;
 
     let non_revoc_proof_tau_list = NonRevocProofTauList {
         t1,
@@ -594,41 +451,41 @@ pub fn getTauList(r_pub_key: &CredentialRevocationPublicKey,
 }
 
 
-pub fn createTauListValues(r_pub_key: &CredentialRevocationPublicKey,
-                           accumulatorPublic: &AccumulatorPublic,
-                           nonRevocProofXList: &NonRevocProofXList,
-                           proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
-    trace!("Helpers::create_tau_list_values: >>> r_pub_key: {:?}, accumulatorPublic: {:?}, nonRevocProofXList: {:?}, proof_c: {:?}",
-           r_pub_key, accumulatorPublic, nonRevocProofXList, proof_c);
+pub fn create_tau_list_values2(r_pub_key: &CredentialRevocationPublicKey,
+                               accumulator_public: &AccumulatorPublic,
+                               non_revoc_proof_xlist: &NonRevocProofXList,
+                               proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
+    trace!("Helpers::create_tau_list_values: >>> r_pub_key: {:?}, accumulator_public: {:?}, non_revoc_proof_xlist: {:?}, proof_c: {:?}",
+           r_pub_key, accumulator_public, non_revoc_proof_xlist, proof_c);
 
-    let t1 = r_pub_key.h.mul(&nonRevocProofXList.rho)?.add(&r_pub_key.htilde.mul(&nonRevocProofXList.o)?)?;
-    let mut t2 = proof_c.e.mul(&nonRevocProofXList.c)?
-        .add(&r_pub_key.h.mul(&nonRevocProofXList.m.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&nonRevocProofXList.t.mod_neg()?)?)?;
+    let t1 = r_pub_key.h.mul(&non_revoc_proof_xlist.rho)?.add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.o)?)?;
+    let mut t2 = proof_c.e.mul(&non_revoc_proof_xlist.c)?
+        .add(&r_pub_key.h.mul(&non_revoc_proof_xlist.m.mod_neg()?)?)?
+        .add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.t.mod_neg()?)?)?;
     if t2.is_inf()? {
         t2 = PointG1::new_inf()?;
     }
-    let t3 = Pair::pair(&proof_c.a, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.c)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.y)?.pow(&nonRevocProofXList.rho)?
-            .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m)?)?
-            .mul(&Pair::pair(&r_pub_key.h1, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m2)?)?
-            .mul(&Pair::pair(&r_pub_key.h2, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.s)?)?.inverse()?)?;
-    let t4 = Pair::pair(&r_pub_key.htilde, &accumulatorPublic.accumulator)?
-        .pow(&nonRevocProofXList.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime)?)?;
-    let t5 = r_pub_key.g.mul(&nonRevocProofXList.r)?.add(&r_pub_key.htilde.mul(&nonRevocProofXList.o_prime)?)?;
-    let mut t6 = proof_c.d.mul(&nonRevocProofXList.r_prime_prime)?
-        .add(&r_pub_key.g.mul(&nonRevocProofXList.m_prime.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&nonRevocProofXList.t_prime.mod_neg()?)?)?;
+    let t3 = Pair::pair(&proof_c.a, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.c)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r)?)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.y)?.pow(&non_revoc_proof_xlist.rho)?
+            .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.m)?)?
+            .mul(&Pair::pair(&r_pub_key.h1, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.m2)?)?
+            .mul(&Pair::pair(&r_pub_key.h2, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.s)?)?.inverse()?)?;
+    let t4 = Pair::pair(&r_pub_key.htilde, &accumulator_public.accumulator)?
+        .pow(&non_revoc_proof_xlist.r)?
+        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r_prime)?)?;
+    let t5 = r_pub_key.g.mul(&non_revoc_proof_xlist.r)?.add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.o_prime)?)?;
+    let mut t6 = proof_c.d.mul(&non_revoc_proof_xlist.r_prime_prime)?
+        .add(&r_pub_key.g.mul(&non_revoc_proof_xlist.m_prime.mod_neg()?)?)?
+        .add(&r_pub_key.htilde.mul(&non_revoc_proof_xlist.t_prime.mod_neg()?)?)?;
     if t6.is_inf()? {
         t6 = PointG1::new_inf()?;
     }
-    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime_prime)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m_prime.mod_neg()?)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &proof_c.s)?.pow(&nonRevocProofXList.r)?)?;
-    let t8 = Pair::pair(&r_pub_key.htilde, &r_pub_key.u)?.pow(&nonRevocProofXList.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime_prime_prime)?)?;
+    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r_prime_prime)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.m_prime.mod_neg()?)?)?
+        .mul(&Pair::pair(&r_pub_key.htilde, &proof_c.s)?.pow(&non_revoc_proof_xlist.r)?)?;
+    let t8 = Pair::pair(&r_pub_key.htilde, &r_pub_key.u)?.pow(&non_revoc_proof_xlist.r)?
+        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&non_revoc_proof_xlist.r_prime_prime_prime)?)?;
 
     let non_revoc_proof_tau_list = NonRevocProofTauList {
         t1,
@@ -644,207 +501,4 @@ pub fn createTauListValues(r_pub_key: &CredentialRevocationPublicKey,
     trace!("Helpers::create_tau_list_values: <<< non_revoc_proof_tau_list: {:?}", non_revoc_proof_tau_list);
 
     Ok(non_revoc_proof_tau_list)
-}
-
-
-pub fn create_tau_list_values(r_pub_key: &CredentialRevocationPublicKey,
-                              rev_reg: &RevocationRegistry,
-                              nonRevocProofXList: &NonRevocProofXList,
-                              proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
-    trace!("Helpers::create_tau_list_values: >>> r_pub_key: {:?}, rev_reg: {:?}, nonRevocProofXList: {:?}, proof_c: {:?}",
-           r_pub_key, rev_reg, nonRevocProofXList, proof_c);
-
-    let t1 = r_pub_key.h.mul(&nonRevocProofXList.rho)?.add(&r_pub_key.htilde.mul(&nonRevocProofXList.o)?)?;
-    let mut t2 = proof_c.e.mul(&nonRevocProofXList.c)?
-        .add(&r_pub_key.h.mul(&nonRevocProofXList.m.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&nonRevocProofXList.t.mod_neg()?)?)?;
-    if t2.is_inf()? {
-        t2 = PointG1::new_inf()?;
-    }
-    let t3 = Pair::pair(&proof_c.a, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.c)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.y)?.pow(&nonRevocProofXList.rho)?
-            .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m)?)?
-            .mul(&Pair::pair(&r_pub_key.h1, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m2)?)?
-            .mul(&Pair::pair(&r_pub_key.h2, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.s)?)?.inverse()?)?;
-    let t4 = Pair::pair(&r_pub_key.htilde, &rev_reg.accum)?
-        .pow(&nonRevocProofXList.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime)?)?;
-    let t5 = r_pub_key.g.mul(&nonRevocProofXList.r)?.add(&r_pub_key.htilde.mul(&nonRevocProofXList.o_prime)?)?;
-    let mut t6 = proof_c.d.mul(&nonRevocProofXList.r_prime_prime)?
-        .add(&r_pub_key.g.mul(&nonRevocProofXList.m_prime.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&nonRevocProofXList.t_prime.mod_neg()?)?)?;
-    if t6.is_inf()? {
-        t6 = PointG1::new_inf()?;
-    }
-    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime_prime)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.m_prime.mod_neg()?)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &proof_c.s)?.pow(&nonRevocProofXList.r)?)?;
-    let t8 = Pair::pair(&r_pub_key.htilde, &r_pub_key.u)?.pow(&nonRevocProofXList.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&nonRevocProofXList.r_prime_prime_prime)?)?;
-
-    let non_revoc_proof_tau_list = NonRevocProofTauList {
-        t1,
-        t2,
-        t3,
-        t4,
-        t5,
-        t6,
-        t7,
-        t8,
-    };
-
-    trace!("Helpers::create_tau_list_values: <<< non_revoc_proof_tau_list: {:?}", non_revoc_proof_tau_list);
-
-    Ok(non_revoc_proof_tau_list)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use accumulator::{issuer, prover};
-
-    #[test]
-    fn encode_attribute_works() {
-        let test_str = "5435";
-        let test_answer = "83761840706354868391674207739241454863743470852830526299004654280720761327142";
-        assert_eq!(test_answer, encode_attribute(test_str, ByteOrder::Big).unwrap().to_dec().unwrap());
-    }
-
-    #[test]
-    fn generate_v_prime_prime_works() {
-        MockHelper::inject();
-
-        let result = BigNumber::from_dec("6620937836014079781509458870800001917950459774302786434315639456568768602266735503527631640833663968617512880802104566048179854406925811731340920442625764155409951969854303612644125623549271204625894424804352003689903192473464433927658013251120302922648839652919662117216521257876025436906282750361355336367533874548955283776610021309110505377492806210342214471251451681722267655419075635703240258044336607001296052867746675049720589092355650996711033859489737240617860392914314205277920274997312351322125481593636904917159990500837822414761512231315313922792934655437808723096823124948039695324591344458785345326611693414625458359651738188933757751726392220092781991665483583988703321457480411992304516676385323318285847376271589157730040526123521479652961899368891914982347831632139045838008837541334927738208491424027").unwrap();
-        assert_eq!(generate_v_prime_prime().unwrap(), result);
-    }
-
-    #[test]
-    fn bitwise_or_big_int_works() {
-        let a = BigNumber::from_dec("778378032744961463933002553964902776831187587689736807008034459507677878432383414623740074");
-        let b = BigNumber::from_dec("1018517988167243043134222844204689080525734196832968125318070224677190649881668353091698688");
-        let result = BigNumber::from_dec("1796896020912204507067225398169591857356921784522704932326104684184868528314051767715438762");
-        assert_eq!(result.unwrap(), bitwise_or_big_int(&a.unwrap(), &b.unwrap()).unwrap());
-    }
-
-    #[test]
-    fn four_squares_works() {
-        let res = four_squares(107 as i32);
-        let res_data = res.unwrap();
-
-        assert_eq!("9".to_string(), res_data.get("0").unwrap().to_dec().unwrap());
-        assert_eq!("5".to_string(), res_data.get("1").unwrap().to_dec().unwrap());
-        assert_eq!("1".to_string(), res_data.get("2").unwrap().to_dec().unwrap());
-        assert_eq!("0".to_string(), res_data.get("3").unwrap().to_dec().unwrap());
-
-        let res = four_squares(112 as i32);
-        let res_data = res.unwrap();
-
-        assert_eq!("10".to_string(), res_data.get("0").unwrap().to_dec().unwrap());
-        assert_eq!("2".to_string(), res_data.get("1").unwrap().to_dec().unwrap());
-        assert_eq!("2".to_string(), res_data.get("2").unwrap().to_dec().unwrap());
-        assert_eq!("2".to_string(), res_data.get("3").unwrap().to_dec().unwrap());
-
-
-        let res = four_squares(253 as i32);
-        let res_data = res.unwrap();
-
-        assert_eq!("14".to_string(), res_data.get("0").unwrap().to_dec().unwrap());
-        assert_eq!("7".to_string(), res_data.get("1").unwrap().to_dec().unwrap());
-        assert_eq!("2".to_string(), res_data.get("2").unwrap().to_dec().unwrap());
-        assert_eq!("2".to_string(), res_data.get("3").unwrap().to_dec().unwrap());
-
-        let res = four_squares(1506099439 as i32);
-        let res_data = res.unwrap();
-
-        assert_eq!("38807".to_string(), res_data.get("0").unwrap().to_dec().unwrap());
-        assert_eq!("337".to_string(), res_data.get("1").unwrap().to_dec().unwrap());
-        assert_eq!("50".to_string(), res_data.get("2").unwrap().to_dec().unwrap());
-        assert_eq!("11".to_string(), res_data.get("3").unwrap().to_dec().unwrap());
-    }
-
-    #[test]
-    fn transform_u32_to_array_of_u8_works() {
-        let int = 0x74BA7445;
-        let answer = vec![0x74, 0xBA, 0x74, 0x45];
-        assert_eq!(transform_u32_to_array_of_u8(int), answer)
-    }
-
-    #[test]
-    fn test_encode_attribute_fail_simple_collision_on_internal_truncate() {
-        let ea3079 = encode_attribute("3079", ByteOrder::Big).unwrap();
-        let ea6440 = encode_attribute("6440", ByteOrder::Big).unwrap();
-        assert_ne!(ea3079, ea6440);
-
-        /* Collision generator
-        let mut arr: [i32; 256] = [0; 256];
-        let i: usize = 0;
-        loop {
-            let v = BigNumber::hash(i.to_string().as_bytes()).unwrap();
-            if v[1] == 0 {
-                let v0 = v[0] as usize;
-                if v0 != 0 && arr[v0] != 0 {
-                    println!("{} {}", arr[v0], i);
-                    return;
-                }
-                arr[v0] = i;
-            }
-        }
-        */
-    }
-
-    #[test]
-    fn calc_tne_works() {
-        let proof = prover::mocks::ne_proof();
-        let pk = issuer::mocks::credential_primary_public_key();
-
-        let res = calc_tne(&pk, &proof.u, &proof.r, &proof.mj, &proof.alpha, &proof.t, proof.predicate.is_less());
-
-        assert!(res.is_ok());
-
-        let res_data = res.unwrap();
-
-        assert_eq!("65515179709108026467913442253499099801966907020745255347110398650355916665803837\
-        07074374285625623992618258034482874705637485499638759374334111906777998444597195962882137495\
-        46241252599867765887126944842605322232431550047077300912325544804771322199929454027075662773\
-        58152501360632014253935013985662381916247720671148707249946908885935798495651223006117551824\
-        33699034819414235909521498375093876684792233526390609966850211010821350981640872720328541779\
-        97327105574647318106219933086355568371491060691278794120258318319023486167854894518658221865\
-        24800436027192696216152105090506015757266556255232306144655608567343136505670", res_data[1].to_dec().unwrap());
-
-        assert_eq!("37533780917779531511237145959836444300689607963031476900866684621488489918126566\
-        54952188995351472791057578124947683585454675784622178441108808918503618679224678596364814336\
-        63975021590121523531457538883313658539633581551354420547514166200076285563937951004982609082\
-        94371022811442070620351098758127098244798879430407810333937749563329381152076445529402863878\
-        16882342579670134371608309243324042556315552335708289143881109111122601942672089350483029204\
-        32781521417367911232887738135274550782236554694976666166990482622538324995757159182681616076\
-        20654341861117070040350723055043721492475393447378422268465089327305214127497", res_data[4].to_dec().unwrap());
-
-        assert_eq!("85792352895820240333890789102145726421844499161302737480886489756497939690747882\
-        47623299361945003435808043132166100712819619828180642308596640747304600618705399424545299874\
-        18436312019502751107773643122490033193620386977937753770823229496538888267752454217128873324\
-        20051752162962176051068381742850661487019199688955385460549344136833325388021671633290649550\
-        40515565389149016308077954851808706083095582109248170847463880536249366156605714267596752766\
-        31839937087680336690781266325043663083854158029559611517721678702314741440737728022831823751\
-        45256219426454149503998537986414519426715148839164974816475472185621648644891", res_data[5].to_dec().unwrap());
-    }
-
-    #[test]
-    fn calc_teq_works() {
-        let proof = prover::mocks::eq_proof();
-        let pk = issuer::mocks::credential_primary_public_key();
-        let unrevealed_attrs = prover::mocks::unrevealed_attrs();
-
-        let res = calc_teq(&pk, &proof.a_prime, &proof.e, &proof.v,
-                           &proof.m, &proof.m2, &unrevealed_attrs);
-
-        assert!(res.is_ok());
-        assert_eq!("91264240506826174927348047353965425159860757123338479073424113940259806551851229\
-        29223711966727033722604489188203150739124733516450682232344417480340482341559520998831392577\
-        94116014271631698674027316835357321996906259424466546451562774161140030976964596027597723555\
-        89838338098112196343083991333232435443953495090160789157756256594127180544038043918022344493\
-        84865179215464700548799307482303595441481342427878016310830209497605585249372185396761509717\
-        23513431038543455953776634428397886712772493416769127589401268192936635379602026733723945633\
-        53933943790374230983129060596346889726181201177754774157687114812348019929279", res.unwrap().to_dec().unwrap());
-    }
 }

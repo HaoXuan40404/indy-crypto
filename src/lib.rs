@@ -40,6 +40,8 @@ extern crate libc;
 
 extern crate time;
 
+extern crate colored;
+
 
 #[cfg(feature = "bn_openssl")]
 #[path = "bn/openssl.rs"]
@@ -50,10 +52,6 @@ pub mod errors;
 #[macro_use]
 extern crate lazy_static;
 
-#[cfg(feature = "wasm")]
-pub mod wasm;
-
-
 #[cfg(feature = "accumulator")]
 #[macro_use]
 pub mod accumulator;
@@ -62,5 +60,3 @@ pub mod accumulator;
 #[cfg(feature = "pair_amcl")]
 #[path = "pair/amcl.rs"]
 pub mod pair;
-
-extern crate colored;
