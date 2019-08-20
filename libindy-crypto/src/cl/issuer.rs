@@ -1,13 +1,12 @@
 use bn::BigNumber;
 use cl::*;
 use errors::IndyCryptoError;
-use pair::*;
 use cl::constants::*;
 use cl::helpers::*;
 use cl::commitment::get_pedersen_commitment;
 use cl::hash::get_hash_as_int;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Trust source that provides credentials to prover.
 pub struct Issuer {}
@@ -55,27 +54,19 @@ impl Issuer {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (_cred_pub_key, _cred_priv_key, _cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
+    /// let (_cred_pub_key, _cred_priv_key, _cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     /// ```
     pub fn new_credential_def(credential_schema: &CredentialSchema,
-                              non_credential_schema: &NonCredentialSchema,
-                              support_revocation: bool) -> Result<(CredentialPublicKey,
+                              non_credential_schema: &NonCredentialSchema) -> Result<(CredentialPublicKey,
                                                                    CredentialPrivateKey,
                                                                    CredentialKeyCorrectnessProof), IndyCryptoError> {
-        trace!("Issuer::new_credential_def: >>> credential_schema: {:?}, support_revocation: {:?}", credential_schema, support_revocation);
+        trace!("Issuer::new_credential_def: >>> credential_schema: {:?}", credential_schema);
 
         let (p_pub_key, p_priv_key, p_key_meta) =
             Issuer::_new_credential_primary_keys(credential_schema, non_credential_schema)?;
 
-        let (r_pub_key, r_priv_key) = if support_revocation {
-            Issuer::_new_credential_revocation_keys()
-                .map(|(r_pub_key, r_priv_key)| (Some(r_pub_key), Some(r_priv_key)))?
-        } else {
-            (None, None)
-        };
-
-        let cred_pub_key = CredentialPublicKey { p_key: p_pub_key, r_key: r_pub_key };
-        let cred_priv_key = CredentialPrivateKey { p_key: p_priv_key, r_key: r_priv_key };
+        let cred_pub_key = CredentialPublicKey { p_key: p_pub_key};
+        let cred_priv_key = CredentialPrivateKey { p_key: p_priv_key};
         let cred_key_correctness_proof =
             Issuer::_new_credential_key_correctness_proof(&cred_pub_key.p_key,
                                                           &cred_priv_key.p_key,
@@ -85,63 +76,6 @@ impl Issuer {
                cred_pub_key, secret!(&cred_priv_key), cred_key_correctness_proof);
 
         Ok((cred_pub_key, cred_priv_key, cred_key_correctness_proof))
-    }
-
-    /// Creates and returns revocation registry definition (public and private keys, accumulator and tails generator) entities.
-    ///
-    /// # Arguments
-    /// * `credential_pub_key` - Credential public key entity.
-    /// * `max_cred_num` - Max credential number in generated registry.
-    /// * `issuance_by_default` - Type of issuance.
-    ///   If true all indices are assumed to be issued and initial accumulator is calculated over all indices
-    ///   If false nothing is issued initially accumulator is 1
-    ///
-    /// # Example
-    /// ```
-    /// use indy_crypto::cl::issuer::Issuer;
-    ///
-    /// let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
-    /// credential_schema_builder.add_attr("name").unwrap();
-    /// credential_schema_builder.add_attr("sex").unwrap();
-    /// let credential_schema = credential_schema_builder.finalize().unwrap();
-    ///
-    /// let mut non_credential_schema_builder = Issuer::new_non_credential_schema_builder().unwrap();
-    /// non_credential_schema_builder.add_attr("master_secret").unwrap();
-    /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
-    ///
-    /// let (_cred_pub_key, _cred_priv_key, _cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
-    ///
-    /// let (_rev_key_pub, _rev_key_priv, _rev_reg, _rev_tails_generator) = Issuer::new_revocation_registry_def(&_cred_pub_key, 5, false).unwrap();
-    /// ```
-    pub fn new_revocation_registry_def(credential_pub_key: &CredentialPublicKey,
-                                       max_cred_num: u32,
-                                       issuance_by_default: bool) -> Result<(RevocationKeyPublic,
-                                                                             RevocationKeyPrivate,
-                                                                             RevocationRegistry,
-                                                                             RevocationTailsGenerator), IndyCryptoError> {
-        trace!("Issuer::new_revocation_registry_def: >>> credential_pub_key: {:?}, max_cred_num: {:?}, issuance_by_default: {:?}",
-               credential_pub_key, max_cred_num, issuance_by_default);
-
-        let cred_rev_pub_key: &CredentialRevocationPublicKey = credential_pub_key.r_key
-            .as_ref()
-            .ok_or(IndyCryptoError::InvalidStructure(format!("There are not revocation keys in the credential public key.")))?;
-
-        let (rev_key_pub, rev_key_priv) = Issuer::_new_revocation_registry_keys(cred_rev_pub_key, max_cred_num)?;
-
-        let rev_reg = Issuer::_new_revocation_registry(cred_rev_pub_key,
-                                                       &rev_key_priv,
-                                                       max_cred_num,
-                                                       issuance_by_default)?;
-
-        let rev_tails_generator = RevocationTailsGenerator::new(
-            max_cred_num,
-            rev_key_priv.gamma.clone(),
-            cred_rev_pub_key.g_dash.clone());
-
-        trace!("Issuer::new_revocation_registry_def: <<< rev_key_pub: {:?}, rev_key_priv: {:?}, rev_reg: {:?}, rev_tails_generator: {:?}",
-               rev_key_pub, secret!(&rev_key_priv), rev_reg, rev_tails_generator);
-
-        Ok((rev_key_pub, rev_key_priv, rev_reg, rev_tails_generator))
     }
 
     /// Creates and returns credential values entity builder.
@@ -189,7 +123,7 @@ impl Issuer {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, false).unwrap();
+    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     ///
     /// let master_secret = Prover::new_master_secret().unwrap();
     ///
@@ -244,16 +178,12 @@ impl Issuer {
                                                                credential_nonce,
                                                                &credential_pub_key.p_key)?;
 
-        // In the anoncreds whitepaper, `credential context` is denoted by `m2`
-        let cred_context = Issuer::_gen_credential_context(prover_id, None)?;
-
-        let (p_cred, q) = Issuer::_new_primary_credential(&cred_context,
-                                                          credential_pub_key,
+        let (p_cred, q) = Issuer::_new_primary_credential(credential_pub_key,
                                                           credential_priv_key,
                                                           blinded_credential_secrets,
                                                           credential_values)?;
 
-        let cred_signature = CredentialSignature { p_credential: p_cred, r_credential: None };
+        let cred_signature = CredentialSignature { p_credential: p_cred};
 
         let signature_correctness_proof = Issuer::_new_signature_correctness_proof(&credential_pub_key.p_key,
                                                                                    &credential_priv_key.p_key,
@@ -266,310 +196,6 @@ impl Issuer {
                secret!(&cred_signature), signature_correctness_proof);
 
         Ok((cred_signature, signature_correctness_proof))
-    }
-
-    /// Signs credential values with both primary and revocation keys.
-    ///
-    /// # Arguments
-    /// * `prover_id` - Prover identifier.
-    /// * `blinded_credential_secrets` - Blinded credential secrets generated by Prover.
-    /// * `blinded_credential_secrets_correctness_proof` - Blinded credential secrets correctness proof.
-    /// * `credential_nonce` - Nonce used for verification of blinded_credential_secrets_correctness_proof.
-    /// * `credential_issuance_nonce` - Nonce used for creation of signature_correctness_proof.
-    /// * `credential_values` - Credential values to be signed.
-    /// * `credential_pub_key` - Credential public key.
-    /// * `credential_priv_key` - Credential private key.
-    /// * `rev_idx` - User index in revocation accumulator. Required for non-revocation credential_signature part generation.
-    /// * `max_cred_num` - Max credential number in generated registry.
-    /// * `rev_reg` - Revocation registry.
-    /// * `rev_key_priv` - Revocation registry private key.
-    /// * `rev_tails_accessor` - Revocation registry tails accessor.
-    ///
-    /// # Example
-    /// ```
-    /// use indy_crypto::cl::{new_nonce, SimpleTailsAccessor};
-    /// use indy_crypto::cl::issuer::Issuer;
-    /// use indy_crypto::cl::prover::Prover;
-    ///
-    /// let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
-    /// credential_schema_builder.add_attr("name").unwrap();
-    /// let credential_schema = credential_schema_builder.finalize().unwrap();
-    ///
-    /// let mut non_credential_schema_builder = Issuer::new_non_credential_schema_builder().unwrap();
-    /// non_credential_schema_builder.add_attr("master_secret").unwrap();
-    /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
-    ///
-    /// let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
-    ///
-    /// let max_cred_num = 5;
-    /// let (_rev_key_pub, rev_key_priv, mut rev_reg, mut rev_tails_generator) = Issuer::new_revocation_registry_def(&cred_pub_key, max_cred_num, false).unwrap();
-    ///
-    /// let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
-    ///
-    /// let master_secret = Prover::new_master_secret().unwrap();
-    ///
-    /// let mut credential_values_builder = Issuer::new_credential_values_builder().unwrap();
-    /// credential_values_builder.add_value_hidden("master_secret", &master_secret.value().unwrap());
-    /// credential_values_builder.add_dec_known("name", "1139481716457488690172217916278103335").unwrap();
-    /// let cred_values = credential_values_builder.finalize().unwrap();
-    ///
-    /// let credential_nonce = new_nonce().unwrap();
-    ///
-    /// let (blinded_credential_secrets, _credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof) =
-    ///     Prover::blind_credential_secrets(&cred_pub_key, &cred_key_correctness_proof, &cred_values, &credential_nonce).unwrap();
-    ///
-    /// let credential_issuance_nonce = new_nonce().unwrap();
-    ///
-    /// let (_cred_signature, _signature_correctness_proof, _rev_reg_delta) =
-    ///     Issuer::sign_credential_with_revoc("CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW",
-    ///                                        &blinded_credential_secrets,
-    ///                                        &blinded_credential_secrets_correctness_proof,
-    ///                                        &credential_nonce,
-    ///                                        &credential_issuance_nonce,
-    ///                                        &cred_values,
-    ///                                        &cred_pub_key,
-    ///                                        &cred_priv_key,
-    ///                                        1,
-    ///                                        max_cred_num,
-    ///                                        false,
-    ///                                        &mut rev_reg,
-    ///                                        &rev_key_priv,
-    ///                                        &simple_tail_accessor).unwrap();
-    /// ```
-    pub fn sign_credential_with_revoc<RTA>(prover_id: &str,
-                                           blinded_credential_secrets: &BlindedCredentialSecrets,
-                                           blinded_credential_secrets_correctness_proof: &BlindedCredentialSecretsCorrectnessProof,
-                                           credential_nonce: &Nonce,
-                                           credential_issuance_nonce: &Nonce,
-                                           credential_values: &CredentialValues,
-                                           credential_pub_key: &CredentialPublicKey,
-                                           credential_priv_key: &CredentialPrivateKey,
-                                           rev_idx: u32,
-                                           max_cred_num: u32,
-                                           issuance_by_default: bool,
-                                           rev_reg: &mut RevocationRegistry,
-                                           rev_key_priv: &RevocationKeyPrivate,
-                                           rev_tails_accessor: &RTA)
-                                           -> Result<(CredentialSignature, SignatureCorrectnessProof, Option<RevocationRegistryDelta>),
-                                               IndyCryptoError> where RTA: RevocationTailsAccessor {
-        trace!("Issuer::sign_credential: >>> prover_id: {:?}, blinded_credential_secrets: {:?}, blinded_credential_secrets_correctness_proof: {:?},\
-        credential_nonce: {:?}, credential_issuance_nonce: {:?}, credential_values: {:?}, credential_pub_key: {:?}, credential_priv_key: {:?}, \
-        rev_idx: {:?}, max_cred_num: {:?}, rev_reg: {:?}, rev_key_priv: {:?}",
-               prover_id, blinded_credential_secrets, blinded_credential_secrets_correctness_proof, credential_nonce, secret!(credential_values), credential_issuance_nonce,
-               credential_pub_key, secret!(credential_priv_key), secret!(rev_idx), max_cred_num, rev_reg, secret!(rev_key_priv));
-
-        Issuer::_check_blinded_credential_secrets_correctness_proof(blinded_credential_secrets,
-                                                                    blinded_credential_secrets_correctness_proof,
-                                                                    credential_nonce,
-                                                                    &credential_pub_key.p_key)?;
-
-        // In the anoncreds whitepaper, `credential context` is denoted by `m2`
-        let cred_context = Issuer::_gen_credential_context(prover_id, Some(rev_idx))?;
-
-        let (p_cred, q) = Issuer::_new_primary_credential(&cred_context,
-                                                          credential_pub_key,
-                                                          credential_priv_key,
-                                                          blinded_credential_secrets,
-                                                          credential_values)?;
-
-        let (r_cred, rev_reg_delta) = Issuer::_new_non_revocation_credential(rev_idx,
-                                                                             &cred_context,
-                                                                             blinded_credential_secrets,
-                                                                             credential_pub_key,
-                                                                             credential_priv_key,
-                                                                             max_cred_num,
-                                                                             issuance_by_default,
-                                                                             rev_reg,
-                                                                             rev_key_priv,
-                                                                             rev_tails_accessor)?;
-
-        let cred_signature = CredentialSignature { p_credential: p_cred, r_credential: Some(r_cred) };
-
-        let signature_correctness_proof = Issuer::_new_signature_correctness_proof(&credential_pub_key.p_key,
-                                                                                   &credential_priv_key.p_key,
-                                                                                   &cred_signature.p_credential,
-                                                                                   &q,
-                                                                                   credential_issuance_nonce)?;
-
-
-        trace!("Issuer::sign_credential: <<< cred_signature: {:?}, signature_correctness_proof: {:?}, rev_reg_delta: {:?}",
-               secret!(&cred_signature), signature_correctness_proof, rev_reg_delta);
-
-        Ok((cred_signature, signature_correctness_proof, rev_reg_delta))
-    }
-
-    /// Revokes a credential by a rev_idx in a given revocation registry.
-    ///
-    /// # Arguments
-    /// * `rev_reg` - Revocation registry.
-    /// * `max_cred_num` - Max credential number in revocation registry.
-    ///  * rev_idx` - Index of the user in the revocation registry.
-    /// * `rev_tails_accessor` - Revocation registry tails accessor.
-    ///
-    /// # Example
-    /// ```
-    /// use indy_crypto::cl::{new_nonce, SimpleTailsAccessor};
-    /// use indy_crypto::cl::issuer::Issuer;
-    /// use indy_crypto::cl::prover::Prover;
-    ///
-    /// let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
-    /// credential_schema_builder.add_attr("name").unwrap();
-    /// let credential_schema = credential_schema_builder.finalize().unwrap();
-    ///
-    /// let mut non_credential_schema_builder = Issuer::new_non_credential_schema_builder().unwrap();
-    /// non_credential_schema_builder.add_attr("master_secret").unwrap();
-    /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
-    ///
-    /// let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
-    ///
-    /// let max_cred_num = 5;
-    /// let (_rev_key_pub, rev_key_priv, mut rev_reg, mut rev_tails_generator) = Issuer::new_revocation_registry_def(&cred_pub_key, max_cred_num, false).unwrap();
-    ///
-    /// let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
-    ///
-    /// let master_secret = Prover::new_master_secret().unwrap();
-    ///
-    /// let mut credential_values_builder = Issuer::new_credential_values_builder().unwrap();
-    /// credential_values_builder.add_value_hidden("master_secret", &master_secret.value().unwrap());
-    /// credential_values_builder.add_dec_known("name", "1139481716457488690172217916278103335").unwrap();
-    /// let cred_values = credential_values_builder.finalize().unwrap();
-    ///
-    /// let credential_nonce = new_nonce().unwrap();
-    ///
-    /// let (blinded_credential_secrets, _credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof) =
-    ///     Prover::blind_credential_secrets(&cred_pub_key, &cred_key_correctness_proof, &cred_values, &credential_nonce).unwrap();
-    /// let credential_issuance_nonce = new_nonce().unwrap();
-    ///
-    /// let rev_idx = 1;
-    /// let (_cred_signature, _signature_correctness_proof, _rev_reg_delta) =
-    ///     Issuer::sign_credential_with_revoc("CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW",
-    ///                                        &blinded_credential_secrets,
-    ///                                        &blinded_credential_secrets_correctness_proof,
-    ///                                        &credential_nonce,
-    ///                                        &credential_issuance_nonce,
-    ///                                        &cred_values,
-    ///                                        &cred_pub_key,
-    ///                                        &cred_priv_key,
-    ///                                        rev_idx,
-    ///                                        max_cred_num,
-    ///                                        false,
-    ///                                        &mut rev_reg,
-    ///                                        &rev_key_priv,
-    ///                                         &simple_tail_accessor).unwrap();
-    /// Issuer::revoke_credential(&mut rev_reg, max_cred_num, rev_idx, &simple_tail_accessor).unwrap();
-    /// ```
-    pub fn revoke_credential<RTA>(rev_reg: &mut RevocationRegistry,
-                                  max_cred_num: u32,
-                                  rev_idx: u32,
-                                  rev_tails_accessor: &RTA) -> Result<RevocationRegistryDelta, IndyCryptoError> where RTA: RevocationTailsAccessor {
-        trace!("Issuer::revoke_credential: >>> rev_reg: {:?}, max_cred_num: {:?}, rev_idx: {:?}", rev_reg, max_cred_num, secret!(rev_idx));
-
-        let prev_accum = rev_reg.accum.clone();
-
-        let index = Issuer::_get_index(max_cred_num, rev_idx);
-
-        rev_tails_accessor.access_tail(index, &mut |tail| {
-            rev_reg.accum = rev_reg.accum.sub(tail).unwrap();
-        })?;
-
-        let rev_reg_delta = RevocationRegistryDelta {
-            prev_accum: Some(prev_accum),
-            accum: rev_reg.accum.clone(),
-            issued: HashSet::new(),
-            revoked: hashset![rev_idx]
-        };
-
-        trace!("Issuer::revoke_credential: <<< rev_reg_delta: {:?}", rev_reg_delta);
-
-        Ok(rev_reg_delta)
-    }
-
-    /// Recovery a credential by a rev_idx in a given revocation registry
-    ///
-    /// # Arguments
-    /// * `rev_reg` - Revocation registry.
-    /// * `max_cred_num` - Max credential number in revocation registry.
-    ///  * rev_idx` - Index of the user in the revocation registry.
-    /// * `rev_tails_accessor` - Revocation registry tails accessor.
-    ///
-    /// # Example
-    /// ```
-    /// use indy_crypto::cl::{new_nonce, SimpleTailsAccessor};
-    /// use indy_crypto::cl::issuer::Issuer;
-    /// use indy_crypto::cl::prover::Prover;
-    ///
-    /// let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
-    /// credential_schema_builder.add_attr("name").unwrap();
-    /// let credential_schema = credential_schema_builder.finalize().unwrap();
-    ///
-    /// let mut non_credential_schema_builder = Issuer::new_non_credential_schema_builder().unwrap();
-    /// non_credential_schema_builder.add_attr("master_secret").unwrap();
-    /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
-    ///
-    /// let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
-    ///
-    /// let max_cred_num = 5;
-    /// let (_rev_key_pub, rev_key_priv, mut rev_reg, mut rev_tails_generator) = Issuer::new_revocation_registry_def(&cred_pub_key, max_cred_num, false).unwrap();
-    ///
-    /// let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
-    ///
-    /// let master_secret = Prover::new_master_secret().unwrap();
-    ///
-    /// let mut credential_values_builder = Issuer::new_credential_values_builder().unwrap();
-    /// credential_values_builder.add_value_hidden("master_secret", &master_secret.value().unwrap());
-    /// credential_values_builder.add_dec_known("name", "1139481716457488690172217916278103335").unwrap();
-    /// let cred_values = credential_values_builder.finalize().unwrap();
-    ///
-    /// let credential_nonce = new_nonce().unwrap();
-    ///
-    /// let (blinded_credential_secrets, _credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof) =
-    ///     Prover::blind_credential_secrets(&cred_pub_key, &cred_key_correctness_proof, &cred_values, &credential_nonce).unwrap();
-    ///
-    /// let credential_issuance_nonce = new_nonce().unwrap();
-    ///
-    /// let rev_idx = 1;
-    /// let (_cred_signature, _signature_correctness_proof, _rev_reg_delta) =
-    ///     Issuer::sign_credential_with_revoc("CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW",
-    ///                                        &blinded_credential_secrets,
-    ///                                        &blinded_credential_secrets_correctness_proof,
-    ///                                        &credential_nonce,
-    ///                                        &credential_issuance_nonce,
-    ///                                        &cred_values,
-    ///                                        &cred_pub_key,
-    ///                                        &cred_priv_key,
-    ///                                        rev_idx,
-    ///                                        max_cred_num,
-    ///                                        false,
-    ///                                        &mut rev_reg,
-    ///                                        &rev_key_priv,
-    ///                                         &simple_tail_accessor).unwrap();
-    /// Issuer::revoke_credential(&mut rev_reg, max_cred_num, rev_idx, &simple_tail_accessor).unwrap();
-    /// Issuer::recovery_credential(&mut rev_reg, max_cred_num, rev_idx, &simple_tail_accessor).unwrap();
-    /// ```
-    pub fn recovery_credential<RTA>(rev_reg: &mut RevocationRegistry,
-                                    max_cred_num: u32,
-                                    rev_idx: u32,
-                                    rev_tails_accessor: &RTA) -> Result<RevocationRegistryDelta, IndyCryptoError> where RTA: RevocationTailsAccessor {
-        trace!("Issuer::recovery_credential: >>> rev_reg: {:?}, max_cred_num: {:?}, rev_idx: {:?}", rev_reg, max_cred_num, secret!(rev_idx));
-
-        let prev_accum = rev_reg.accum.clone();
-
-        let index = Issuer::_get_index(max_cred_num, rev_idx);
-
-        rev_tails_accessor.access_tail(index, &mut |tail| {
-            rev_reg.accum = rev_reg.accum.add(tail).unwrap();
-        })?;
-
-        let rev_reg_delta = RevocationRegistryDelta {
-            prev_accum: Some(prev_accum),
-            accum: rev_reg.accum.clone(),
-            issued: hashset![rev_idx],
-            revoked: HashSet::new()
-        };
-
-        trace!("Issuer::recovery_credential: <<< rev_reg_delta: {:?}", rev_reg_delta);
-
-        Ok(rev_reg_delta)
     }
 
     /// 生成Primary凭证的公私钥对
@@ -620,9 +246,7 @@ impl Issuer {
 
         let z = s.mod_exp(&xz, &n, Some(&mut ctx))?;
 
-        let rctxt = s.mod_exp(&gen_x(&p, &q)?, &n, Some(&mut ctx))?;
-
-        let cred_pr_pub_key = CredentialPrimaryPublicKey { n, s, rctxt, r, z };
+        let cred_pr_pub_key = CredentialPrimaryPublicKey { n, s, r, z };
         let cred_pr_priv_key = CredentialPrimaryPrivateKey { p, q };
         let cred_pr_pub_key_metadata = CredentialPrimaryPublicKeyMetadata { xz, xr };
 
@@ -630,35 +254,6 @@ impl Issuer {
                cred_pr_pub_key, secret!(&cred_pr_priv_key), cred_pr_pub_key_metadata);
 
         Ok((cred_pr_pub_key, cred_pr_priv_key, cred_pr_pub_key_metadata))
-    }
-
-    fn _new_credential_revocation_keys() -> Result<(CredentialRevocationPublicKey,
-                                                    CredentialRevocationPrivateKey), IndyCryptoError> {
-        trace!("Issuer::_new_credential_revocation_keys: >>>");
-
-        let h = PointG1::new()?;
-        let h0 = PointG1::new()?;
-        let h1 = PointG1::new()?;
-        let h2 = PointG1::new()?;
-        let htilde = PointG1::new()?;
-        let g = PointG1::new()?;
-
-        let u = PointG2::new()?;
-        let h_cap = PointG2::new()?;
-
-        let x = GroupOrderElement::new()?;
-        let sk = GroupOrderElement::new()?;
-        let g_dash = PointG2::new()?;
-
-        let pk = g.mul(&sk)?;
-        let y = h_cap.mul(&x)?;
-
-        let cred_rev_pub_key = CredentialRevocationPublicKey { g, g_dash, h, h0, h1, h2, htilde, h_cap, u, pk, y };
-        let cred_rev_priv_key = CredentialRevocationPrivateKey { x, sk };
-
-        trace!("Issuer::_new_credential_revocation_keys: <<< cred_rev_pub_key: {:?}, cred_rev_priv_key: {:?}", cred_rev_pub_key, secret!(&cred_rev_priv_key));
-
-        Ok((cred_rev_pub_key, cred_rev_priv_key))
     }
 
     /// 生成Primary凭证密钥的正确性证明
@@ -724,51 +319,6 @@ impl Issuer {
         trace!("Issuer::_new_credential_key_correctness_proof: <<< key_correctness_proof: {:?}", key_correctness_proof);
 
         Ok(key_correctness_proof)
-    }
-
-    fn _new_revocation_registry(cred_rev_pub_key: &CredentialRevocationPublicKey,
-                                rev_key_priv: &RevocationKeyPrivate,
-                                max_cred_num: u32,
-                                issuance_by_default: bool) -> Result<RevocationRegistry, IndyCryptoError> {
-        trace!("Issuer::_new_revocation_registry: >>> cred_rev_pub_key: {:?}, rev_key_priv: {:?}, max_cred_num: {:?}, issuance_by_default: {:?}",
-               cred_rev_pub_key, secret!(rev_key_priv), max_cred_num, issuance_by_default);
-
-        let mut accum = Accumulator::new_inf()?;
-
-        if issuance_by_default {
-            for i in 1..max_cred_num + 1 {
-                let index = Issuer::_get_index(max_cred_num, i);
-                accum = accum.add(&Tail::new_tail(index, &cred_rev_pub_key.g_dash, &rev_key_priv.gamma)?)?;
-            }
-        };
-
-        let rev_reg = RevocationRegistry {
-            accum
-        };
-
-        trace!("Issuer::_new_revocation_registry: <<< rev_reg: {:?}", rev_reg);
-
-        Ok(rev_reg)
-    }
-
-    fn _new_revocation_registry_keys(cred_rev_pub_key: &CredentialRevocationPublicKey,
-                                     max_cred_num: u32) -> Result<(RevocationKeyPublic, RevocationKeyPrivate), IndyCryptoError> {
-        trace!("Issuer::_new_revocation_registry_keys: >>> cred_rev_pub_key: {:?}, max_cred_num: {:?}",
-               cred_rev_pub_key, max_cred_num);
-
-        let gamma = GroupOrderElement::new()?;
-
-        let mut z = Pair::pair(&cred_rev_pub_key.g, &cred_rev_pub_key.g_dash)?;
-        let mut pow = GroupOrderElement::from_bytes(&transform_u32_to_array_of_u8(max_cred_num + 1))?;
-        pow = gamma.pow_mod(&pow)?;
-        z = z.pow(&pow)?;
-
-        let rev_key_pub = RevocationKeyPublic { z };
-        let rev_key_priv = RevocationKeyPrivate { gamma };
-
-        trace!("Issuer::_new_revocation_registry_keys: <<< rev_key_pub: {:?}, rev_key_priv: {:?}", rev_key_pub, secret!(&rev_key_priv));
-
-        Ok((rev_key_pub, rev_key_priv))
     }
 
     /// 检查Prover发来的盲化凭证的正确性
@@ -843,30 +393,9 @@ impl Issuer {
         Ok(())
     }
 
-    // In the anoncreds whitepaper, `credential context` is denoted by `m2`
-    fn _gen_credential_context(prover_id: &str, rev_idx: Option<u32>) -> Result<BigNumber, IndyCryptoError> {
-        trace!("Issuer::_calc_m2: >>> prover_id: {:?}, rev_idx: {:?}", prover_id, secret!(rev_idx));
-
-        let rev_idx = rev_idx.map(|i| i as i32).unwrap_or(-1);
-
-        let prover_id_bn = encode_attribute(prover_id, ByteOrder::Little)?;
-        let rev_idx_bn = encode_attribute(&rev_idx.to_string(), ByteOrder::Little)?;
-
-        let mut values: Vec<u8> = Vec::new();
-        values.extend_from_slice(&prover_id_bn.to_bytes()?);
-        values.extend_from_slice(&rev_idx_bn.to_bytes()?);
-
-        let credential_context = get_hash_as_int(&vec![values])?;
-
-        trace!("Issuer::_gen_credential_context: <<< credential_context: {:?}", secret!(&credential_context));
-
-        Ok(credential_context)
-    }
-
     /// 生成新的Primary凭证
     /// 
     /// 输入：
-    ///     m2
     ///     CredentialPublicKey
     ///     CredentialPrivateKey
     ///     BlindedCredentialSecrets
@@ -877,20 +406,19 @@ impl Issuer {
     ///     BigNumber: Q
     /// 
     /// 对应论文公式
-    fn _new_primary_credential(credential_context: &BigNumber,
-                               cred_pub_key: &CredentialPublicKey,
+    fn _new_primary_credential(cred_pub_key: &CredentialPublicKey,
                                cred_priv_key: &CredentialPrivateKey,
                                blinded_credential_secrets: &BlindedCredentialSecrets,
                                cred_values: &CredentialValues) -> Result<(PrimaryCredentialSignature, BigNumber), IndyCryptoError> {
-        trace!("Issuer::_new_primary_credential: >>> credential_context: {:?}, cred_pub_key: {:?}, cred_priv_key: {:?}, blinded_ms: {:?},\
-         cred_values: {:?}", secret!(credential_context), cred_pub_key, secret!(cred_priv_key), blinded_credential_secrets, secret!(cred_values));
+        trace!("Issuer::_new_primary_credential: >>> cred_pub_key: {:?}, cred_priv_key: {:?}, blinded_ms: {:?},\
+         cred_values: {:?}", cred_pub_key, secret!(cred_priv_key), blinded_credential_secrets, secret!(cred_values));
 
         let v = generate_v_prime_prime()?;
 
         let e = generate_prime_in_range(&LARGE_E_START_VALUE, &LARGE_E_END_RANGE_VALUE)?;
-        let (a, q) = Issuer::_sign_primary_credential(cred_pub_key, cred_priv_key, &credential_context, &cred_values, &v, blinded_credential_secrets, &e)?;
+        let (a, q) = Issuer::_sign_primary_credential(cred_pub_key, cred_priv_key, &cred_values, &v, blinded_credential_secrets, &e)?;
 
-        let pr_cred_sig = PrimaryCredentialSignature { m_2: credential_context.clone()?, a, e, v };
+        let pr_cred_sig = PrimaryCredentialSignature { a, e, v };
 
         trace!("Issuer::_new_primary_credential: <<< pr_cred_sig: {:?}, q: {:?}", secret!(&pr_cred_sig), secret!(&q));
 
@@ -902,7 +430,6 @@ impl Issuer {
     /// 输入：
     ///     CredentialPublicKey
     ///     CredentialPrivateKey
-    ///     m2
     ///     CredentialValues
     ///     v''
     ///     BlindedCredentialSecrets
@@ -915,18 +442,16 @@ impl Issuer {
     /// 对应论文公式2.9、2.10
     fn _sign_primary_credential(cred_pub_key: &CredentialPublicKey,
                                 cred_priv_key: &CredentialPrivateKey,
-                                cred_context: &BigNumber,
                                 cred_values: &CredentialValues,
                                 v: &BigNumber,
                                 blinded_cred_secrets: &BlindedCredentialSecrets,
                                 e: &BigNumber) -> Result<(BigNumber, BigNumber), IndyCryptoError> {
         trace!("Issuer::_sign_primary_credential: >>> cred_pub_key: {:?}, \
                                                       cred_priv_key: {:?}, \
-                                                      cred_context: {:?}, \
                                                       cred_values: {:?}, \
                                                       v: {:?},\
                                                       blinded_cred_secrets: {:?}, \
-                                                      e: {:?}", cred_pub_key, secret!(cred_priv_key), secret!(cred_context), secret!(cred_values),
+                                                      e: {:?}", cred_pub_key, secret!(cred_priv_key), secret!(cred_values),
                                                                 secret!(v), blinded_cred_secrets, secret!(e));
 
         let p_pub_key = &cred_pub_key.p_key;
@@ -939,8 +464,6 @@ impl Issuer {
         if blinded_cred_secrets.u != BigNumber::from_u32(0)? {
             rx = rx.mod_mul(&blinded_cred_secrets.u, &p_pub_key.n, Some(&mut context))?;
         }
-
-        rx = rx.mod_mul(&p_pub_key.rctxt.mod_exp(&cred_context, &p_pub_key.n, Some(&mut context))?, &p_pub_key.n, Some(&mut context))?;
 
         for (key, attr) in cred_values.attrs_values.iter().filter(|&(_, v)| v.is_known()) {
             let pk_r = p_pub_key.r
@@ -1015,105 +538,6 @@ impl Issuer {
         Ok(signature_correctness_proof)
     }
 
-    fn _get_index(max_cred_num: u32, rev_idx: u32) -> u32 {
-        max_cred_num + 1 - rev_idx
-    }
-
-    fn _new_non_revocation_credential(rev_idx: u32,
-                                      cred_context: &BigNumber,
-                                      blinded_credential_secrets: &BlindedCredentialSecrets,
-                                      cred_pub_key: &CredentialPublicKey,
-                                      cred_priv_key: &CredentialPrivateKey,
-                                      max_cred_num: u32,
-                                      issuance_by_default: bool,
-                                      rev_reg: &mut RevocationRegistry,
-                                      rev_key_priv: &RevocationKeyPrivate,
-                                      rev_tails_accessor: &RevocationTailsAccessor)
-                                      -> Result<(NonRevocationCredentialSignature, Option<RevocationRegistryDelta>), IndyCryptoError> {
-        trace!("Issuer::_new_non_revocation_credential: >>> rev_idx: {:?}, cred_context: {:?}, blinded_ms: {:?}, cred_pub_key: {:?}, cred_priv_key: {:?}, \
-        max_cred_num: {:?}, issuance_by_default: {:?}, rev_reg: {:?}, rev_key_priv: {:?}",
-               secret!(rev_idx), secret!(cred_context), blinded_credential_secrets, cred_pub_key, secret!(cred_priv_key), max_cred_num,
-               issuance_by_default, rev_reg, secret!(rev_key_priv));
-
-        let ur = blinded_credential_secrets.ur
-            .ok_or(IndyCryptoError::InvalidStructure(format!("No revocation part present in blinded master secret.")))?;
-
-        let r_pub_key: &CredentialRevocationPublicKey = cred_pub_key.r_key
-            .as_ref()
-            .ok_or(IndyCryptoError::InvalidStructure(format!("No revocation part present in credential revocation public key.")))?;
-
-        let r_priv_key: &CredentialRevocationPrivateKey = cred_priv_key.r_key
-            .as_ref()
-            .ok_or(IndyCryptoError::InvalidStructure(format!("No revocation part present in credential revocation private key.")))?;
-
-        let vr_prime_prime = GroupOrderElement::new()?;
-        let c = GroupOrderElement::new()?;
-        let m2 = GroupOrderElement::from_bytes(&cred_context.to_bytes()?)?;
-
-        let g_i = {
-            let i_bytes = transform_u32_to_array_of_u8(rev_idx);
-            let mut pow = GroupOrderElement::from_bytes(&i_bytes)?;
-            pow = rev_key_priv.gamma.pow_mod(&pow)?;
-            r_pub_key.g.mul(&pow)?
-        };
-
-        let sigma =
-            r_pub_key.h0.add(&r_pub_key.h1.mul(&m2)?)?
-                .add(&ur)?
-                .add(&g_i)?
-                .add(&r_pub_key.h2.mul(&vr_prime_prime)?)?
-                .mul(&r_priv_key.x.add_mod(&c)?.inverse()?)?;
-
-
-        let sigma_i = r_pub_key.g_dash
-            .mul(&r_priv_key.sk
-                .add_mod(&rev_key_priv.gamma
-                    .pow_mod(&GroupOrderElement::from_bytes(&transform_u32_to_array_of_u8(rev_idx))?)?)?
-                .inverse()?)?;
-        let u_i = r_pub_key.u
-            .mul(&rev_key_priv.gamma
-                .pow_mod(&GroupOrderElement::from_bytes(&transform_u32_to_array_of_u8(rev_idx))?)?)?;
-
-        let index = Issuer::_get_index(max_cred_num, rev_idx);
-
-        let rev_reg_delta = if issuance_by_default {
-            None
-        } else {
-            let prev_acc = rev_reg.accum.clone();
-
-            rev_tails_accessor.access_tail(index, &mut |tail| {
-                rev_reg.accum = rev_reg.accum.add(tail).unwrap();
-            })?;
-
-            Some(RevocationRegistryDelta {
-                prev_accum: Some(prev_acc),
-                accum: rev_reg.accum.clone(),
-                issued: hashset![rev_idx],
-                revoked: HashSet::new()
-            })
-        };
-
-        let witness_signature = WitnessSignature {
-            sigma_i,
-            u_i,
-            g_i: g_i.clone(),
-        };
-
-        let non_revocation_cred_sig = NonRevocationCredentialSignature {
-            sigma,
-            c,
-            vr_prime_prime,
-            witness_signature,
-            g_i: g_i.clone(),
-            i: rev_idx,
-            m2
-        };
-
-        trace!("Issuer::_new_non_revocation_credential: <<< non_revocation_cred_sig: {:?}, rev_reg_delta: {:?}",
-               secret!(&non_revocation_cred_sig), rev_reg_delta);
-
-        Ok((non_revocation_cred_sig, rev_reg_delta))
-    }
 }
 
 #[cfg(test)]
@@ -1123,15 +547,6 @@ mod tests {
     use cl::helpers::MockHelper;
     use self::prover::mocks as prover_mocks;
     use self::prover::Prover;
-
-    #[test]
-    fn generate_context_attribute_works() {
-        let rev_idx = 110;
-        let user_id = "111";
-        let answer = BigNumber::from_dec("31894574610223295263712513093148707509913459424901632064286025736442349335521").unwrap();
-        let result = Issuer::_gen_credential_context(user_id, Some(rev_idx)).unwrap();
-        assert_eq!(result, answer);
-    }
 
     #[test]
     fn credential_schema_builder_works() {
@@ -1163,10 +578,8 @@ mod tests {
     fn issuer_new_credential_def_works() {
         MockHelper::inject();
 
-        let (pub_key, priv_key, mut key_correctness_proof) = Issuer::new_credential_def(&mocks::credential_schema(), &mocks::non_credential_schema(), true).unwrap();
+        let (pub_key,_, mut key_correctness_proof) = Issuer::new_credential_def(&mocks::credential_schema(), &mocks::non_credential_schema()).unwrap();
         key_correctness_proof.xr_cap.sort();
-        assert!(pub_key.r_key.is_some());
-        assert!(priv_key.r_key.is_some());
         Prover::check_credential_key_correctness_proof(&mocks::credential_primary_public_key(), &mocks::credential_key_correctness_proof()).unwrap();
         Prover::check_credential_key_correctness_proof(&pub_key.p_key, &key_correctness_proof).unwrap();
     }
@@ -1174,10 +587,8 @@ mod tests {
     #[test]
     fn issuer_new_credential_def_works_without_revocation_part() {
         MockHelper::inject();
-        let (pub_key, priv_key, mut key_correctness_proof) = Issuer::new_credential_def(&mocks::credential_schema(), &mocks::non_credential_schema(), false).unwrap();
+        let (pub_key,_, mut key_correctness_proof) = Issuer::new_credential_def(&mocks::credential_schema(), &mocks::non_credential_schema()).unwrap();
         key_correctness_proof.xr_cap.sort();
-        assert!(pub_key.r_key.is_none());
-        assert!(priv_key.r_key.is_none());
         Prover::check_credential_key_correctness_proof(&mocks::credential_primary_public_key(), &mocks::credential_key_correctness_proof()).unwrap();
         Prover::check_credential_key_correctness_proof(&pub_key.p_key, &key_correctness_proof).unwrap();
     }
@@ -1186,16 +597,8 @@ mod tests {
     fn issuer_new_credential_works_for_empty_attributes() {
         let cred_attrs = CredentialSchema { attrs: BTreeSet::new() };
         let non_cred_attrs = NonCredentialSchema { attrs: BTreeSet::new() };
-        let res = Issuer::new_credential_def(&cred_attrs, &non_cred_attrs, false);
+        let res = Issuer::new_credential_def(&cred_attrs, &non_cred_attrs);
         assert!(res.is_err())
-    }
-
-    #[test]
-    fn issuer_new_revocation_registry_def_works() {
-        MockHelper::inject();
-
-        let (pub_key, _, _) = Issuer::new_credential_def(&mocks::credential_schema(), &mocks::non_credential_schema(), true).unwrap();
-        Issuer::new_revocation_registry_def(&pub_key, 100, false).unwrap();
     }
 
     #[test]
@@ -1203,14 +606,13 @@ mod tests {
         MockHelper::inject();
 
         let (pub_key, secret_key) = (mocks::credential_public_key(), mocks::credential_private_key());
-        let context_attribute = mocks::m2();
 
         let credential_values = mocks::credential_values();
         let primary_credential = mocks::primary_credential();
 
         let expected_q = primary_credential.a.mod_exp(&primary_credential.e, &pub_key.p_key.n, None).unwrap();
 
-        let (credential_signature, q) = Issuer::_sign_primary_credential(&pub_key, &secret_key, &context_attribute, &credential_values, &primary_credential.v, &prover_mocks::blinded_credential_secrets(), &primary_credential.e).unwrap();
+        let (credential_signature, q) = Issuer::_sign_primary_credential(&pub_key, &secret_key, &credential_values, &primary_credential.v, &prover_mocks::blinded_credential_secrets(), &primary_credential.e).unwrap();
         assert_eq!(primary_credential.a, credential_signature);
         assert_eq!(expected_q, q);
     }
@@ -1234,15 +636,14 @@ mod tests {
                                                                                         &pub_key,
                                                                                         &priv_key).unwrap();
         let expected_credential_signature = PrimaryCredentialSignature {
-            m_2: BigNumber::from_dec("69277050336954731912953999596899794023422356864020449587821228635678593076726").unwrap(),
-            a: BigNumber::from_dec("55719771527635648642663059873751548110003729526149768023348858761822676000319120364271506409606539553745362391988089712782860839380068362174882980970881205548257443324903474770234925851710931167775881095664795219486517097171157739892044533499307580918474233127480498002931380124437871288479961391946733518111263194694163949838217942811760487772894297581985192342667648521402217438775092084212936876662889013332343946485295171338468571445265090484223332117189032952075382194564086833180320161752685274392741586927843333240045100816206184612454596135115597095225936094775557087900195330393833903341104420421910270703292").unwrap(),
+            a: BigNumber::from_dec("54074754752669474710815895997611355933755292472495794297028757293733585022677843150050652531301055505447419697761419282849594885976792851703341229653518207173564353829140391523438328684376424067916713393922299067980778376404626323620669231024175756613553897497359574424133460267127049843905986692272235514465903062556758891652980579384538109193526326404808879772583829784156521331001003057770845642607128842096815764100879428940340599090412250700969611592970415573060305275213522875731783686212985617692969348026134886335953950666956375300189368327935967746738092071131946199621782509727170905141191033241384436451251").unwrap(),
             e: BigNumber::from_dec("259344723055062059907025491480697571938277889515152306249728583105665800713306759149981690559193987143012367913206299323899696942213235956742930201588264091397308910346117473868881").unwrap(),
             v: BigNumber::from_dec("6620937836014079781509458870800001917950459774302786434315639456568768602266735503527631640833663968617512880802104566048179854406925811731340920442625764155409951969854303612644125623549271204625894424804352003689903192473464433927658013251120302922648839652919662117216521257876025436906282750361355336367533874548955283776610021309110505377492806210342214471251451681722267655419075635703240258044336607001296052867746675049720589092355650996711033859489737240617860392914314205277920274997312351322125481593636904917159990500837822414761512231315313922792934655437808723096823124948039695324591344458785345326611693414625458359651738188933757751726392220092781991665483583988703321457480411992304516676385323318285847376271589157730040526123521479652961899368891914982347831632139045838008837541334927738208491424027").unwrap(),
         };
 
         let expected_signature_correctness_proof = SignatureCorrectnessProof {
-            se: BigNumber::from_dec("2316535684685338402719486099497140440509397138514378133900918780469333389486480136191111850166211328850132141833185838701387786377623699701658879707418243873469067338140105909353701983443961216560305099507619894326327011215343831546393461935652727353729569211077678341251559194609266655606583044286237683570733202945212568927881569396756593635310226246775751361393857771145736904040474358059868319224376073326444256671202625371892195787938290235698138706566228735474013375599813867888682764948153638492162885537864183419476303364006809656184241492423118811158508955306092796494765272630456714671171097052765655820709").unwrap(),
-            c: BigNumber::from_dec("104614497723451518313474575657334201988423454698609284842270966472600991936715").unwrap(),
+            se: BigNumber::from_dec("23487661569771807751652002359570404143342718944715493753372733421713841915087665606807696262053993579385724291640175720217463230685797877018997302975506693725033885407532131062197333555400397698535318517607282425834824802572416065398255413813771215244950583421429340809226256684086139480658202123503069216975010517664135219150022746678019901017776835918830721817756913918901850380506234665716995708816724186525891177253008122928771682328288558999297259000356072279839776135511664568494577600779124158822709664724487785036267392255815828776308520466560973735526392740867699374630275815919751091165435127150408163306574").unwrap(),
+            c: BigNumber::from_dec("99140136376546583721353018842625001005884988392287188406890969221689960181668").unwrap(),
         };
 
         assert_eq!(expected_credential_signature, credential_signature.p_credential);
@@ -1265,7 +666,7 @@ mod tests {
         non_credential_builder.add_attr("master_secret").unwrap();
         let non_credential_schema = non_credential_builder.finalize().unwrap();
 
-        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
+        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
 
         println!("cred_pub_key={:#?}", cred_pub_key);
         println!("cred_priv_key={:#?}", cred_priv_key);
@@ -1296,53 +697,29 @@ mod tests {
         println!("credential_secrets_blinding_factors={:#?}", credential_secrets_blinding_factors);
         println!("blinded_credential_secrets_correctness_proof={:#?}", blinded_credential_secrets_correctness_proof);
 
-        let max_cred_num = 5;
-        let issuance_by_default = false;
-        let (rev_key_pub, rev_key_priv, mut rev_reg, mut rev_tails_generator) = Issuer::new_revocation_registry_def(&cred_pub_key, max_cred_num, issuance_by_default).unwrap();
-        let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
-
-        println!("rev_key_pub={:#?}", rev_key_pub);
-        println!("rev_key_priv={:#?}", rev_key_priv);
-        println!("rev_reg={:#?}", rev_reg);
-
         let credential_issuance_nonce = new_nonce().unwrap();
 
         println!("credential_issuance_nonce={:#?}", credential_issuance_nonce);
 
-        let rev_idx = 1;
-        let (mut cred_signature, signature_correctness_proof, rev_reg_delta) =
-                Issuer::sign_credential_with_revoc(prover_mocks::PROVER_DID,
+        let (mut cred_signature, signature_correctness_proof) =
+                Issuer::sign_credential(prover_mocks::PROVER_DID,
                                                    &blinded_credential_secrets,
                                                    &blinded_credential_secrets_correctness_proof,
                                                    &credential_nonce,
                                                    &credential_issuance_nonce,
                                                    &cred_values,
                                                    &cred_pub_key,
-                                                   &cred_priv_key,
-                                                   rev_idx,
-                                                   max_cred_num,
-                                                   issuance_by_default,
-                                                   &mut rev_reg,
-                                                   &rev_key_priv,
-                                                   &simple_tail_accessor).unwrap();
+                                                   &cred_priv_key).unwrap();
 
         println!("before prover cred_signature={:#?}", cred_signature);
         println!("signature_correctness_proof={:#?}", signature_correctness_proof);
-        println!("rev_reg_delta={:#?}", rev_reg_delta);
-
-        let witness = Witness::new(rev_idx, max_cred_num, issuance_by_default, &rev_reg_delta.unwrap(), &simple_tail_accessor).unwrap();
-
-        println!("witness={:#?}", witness);
 
         Prover::process_credential_signature(&mut cred_signature,
                                              &cred_values,
                                              &signature_correctness_proof,
                                              &credential_secrets_blinding_factors,
                                              &cred_pub_key,
-                                             &credential_issuance_nonce,
-                                             Some(&rev_key_pub),
-                                             Some(&rev_reg),
-                                             Some(&witness)).unwrap();
+                                             &credential_issuance_nonce).unwrap();
         println!("after prover cred_signature={:#?}", cred_signature);
     }
 
@@ -1356,14 +733,9 @@ pub mod mocks {
     use super::*;
     use self::prover::mocks as prover_mocks;
 
-    pub fn m2() -> BigNumber {
-        BigNumber::from_dec("69500003785041890145270364348670634122591474903142468939711692725859480163330").unwrap()
-    }
-
     pub fn credential_public_key() -> CredentialPublicKey {
         CredentialPublicKey {
-            p_key: credential_primary_public_key(),
-            r_key: Some(credential_revocation_public_key())
+            p_key: credential_primary_public_key()
         }
     }
 
@@ -1375,8 +747,7 @@ pub mod mocks {
 
     pub fn credential_private_key() -> CredentialPrivateKey {
         CredentialPrivateKey {
-            p_key: credential_primary_private_key(),
-            r_key: Some(credential_revocation_private_key())
+            p_key: credential_primary_private_key()
         }
     }
 
@@ -1405,7 +776,6 @@ pub mod mocks {
                 "name".to_string() => BigNumber::from_dec("13746366475344903846235474634926975241638918842587208382474235803812382305623738390202472416699325318710947819471164393404046657300160431130777599949512363752279699255532766520676602087778932782551551642268680361953142547995705477252031470648760627839338781192638465660242814096792628497668532134733520862819774512844702280755228385177181826134770719398139614496818334553102303655058827333112597721389083677752174761548691146932367625405463552093310281918337645732306726411640995921029049534049899620621850218350850451959460695298206326084935111318539929976208421235801491574788159148374603817580856237304789833819817").unwrap(),
                 "age".to_string() => BigNumber::from_dec("44108535381364140131192122046992150469063899682787071607923270100474406377346334974921271624609604831057319489303147005216748460433766803723946485961496483599061727462446986564337374445433414116404827930271068989186385194213881804968176421601520426938491670159716567463535602365065230923357872520681039811481068030299506899426808944428227249939916740748207937959710920879937436340264212378347807979058089055923797182684599605684112141625998891722166185124853517139266700090781771486877208441006637397349202467436687288873815866066132525168536149657142924597017827004345607609366329623658946277598385003944321738600454").unwrap()
             ],
-            rctxt: BigNumber::from_dec("22367649113891905664593367589756927154620026002870686791425116899113166102463385255777947612590272326902876607965930393299017708388456014672833098517510402725906562714517383519224241769370097436360213271801024664973101516459676759121006263327545857171301256844849290876113986609209526369774492299815377779730250971480247123999361231894462657785201833140206882164481738440445907028661962175780038926095996356731476561447556285865588500666880748440388241988576483428813710093676464103155200711556185738545216528962065908814210434956734336781475483267248489836659903340870985489551641891702996597499832133432061498821350").unwrap(),
             z: BigNumber::from_dec("20971049306556516416548411855462653126934915528788169742105904685171526036021814020308366595378985697473160298612279628754632434933759095053014742445453246869014501318132129164954281672366894792411718693685773560773966579052996993259737028689495198784560422879504530423473348349585086897461177376910543665826129373202987768115430007889968052288637875214108680986123834214768628273585410552488075439001161273207000954506399869209972102566538554006252214727260705838993631349254893430895487478655362331032373744785458381443406082435300178682616238581378757588795672662888045672364001684986862571709608524646032002755410").unwrap(),
         }
     }
@@ -1443,15 +813,13 @@ pub mod mocks {
 
     pub fn credential() -> CredentialSignature {
         CredentialSignature {
-            p_credential: primary_credential(),
-            r_credential: Some(revocation_credential())
+            p_credential: primary_credential()
         }
     }
 
     pub fn primary_credential() -> PrimaryCredentialSignature {
         PrimaryCredentialSignature {
-            m_2: m2(),
-            a: BigNumber::from_dec("95840110198672318069386609447820151443303148951672148942302688159852522121826159131255863808996897783707552162739643131614378528599266064592118168070949684856089397179020395909339742237237109001659944052044286789806424622568162248593348615174430412805702304864926111235957265861502223089731337030295342624021263130121667019811704170784741732056631313942416364801356888740473027595965734903554651671716594105480808073860478030458113568270415524334664803892787850828500787726840657357062470014690758530620898492638223285406749451191024373781693292064727907810317973909071993122608011728847903567696437202869261275989357").unwrap(),
+            a: BigNumber::from_dec("69588387089599079322064085017393896513135428719995140690654925750532180783198285129615247510283473106480892987856891203655172172216420014251021950506126541635781562906309102290229926628372203645698798041303077556948420339302853735495625331108451511834021494010207013287328680505720810915984165051286846859229114001852079088365747171391521676457855442543360021133102433674111721692508498410153497454815832219314917850142665854901119711462352667105196658376896216305115121531964082378561094604401628286685205379861159090524060126964694766705343231757058793293285284562461928603549293607587641042278139296944359132761567").unwrap(),
             e: BigNumber::from_dec("259344723055062059907025491480697571938277889515152306249728583105665800713306759149981690559193987143012367913206299323899696942213235956742929737627098149467059334482909224329289").unwrap(),
             v: BigNumber::from_dec("5177522642739961905246451779745106415833631678527419493097979847130674994322175317813358680588112397645817545181196877920447218934221099725680400456473461773006574524248907665384063283312830072032362079035632193691281908883788817802636793200613194781551766294585713214322070027475018261531627410418089083868168924860170287018794921767336755719648317286409574666350772521700691458505988025932235726856879460289646648423443424514771525778011016926307596993033343253078296271176201879297607473277600595623601315041671939318096370099538051736369903665397770132336227756463959004318265516368592033553198375866430426796045544674341661434259883646250509402187865251361939828425563368375609309858582430238374430940219571654215199985547198317474893778400630391107389154681620331195570178358047424675166497763032927210014306182717").unwrap()
         }
@@ -1462,93 +830,5 @@ pub mod mocks {
             se: BigNumber::from_dec("3334734537522595512130255204133576712888755832249176083829428441939484521962804521556620094862929027472521530337737372127156982501631895923027581299032722136993626472436312493350606297392721442916460565303530477182166558150689207096881806903677798289757210986840223117805945763699774384181290561808002946169805087348964132559339873177551439262849906217425469248654905829499247516863359675175822562426801635372672443279878805810021594383745145548507699220260239027982287123656569649154121094723210761036335764581415392051068843187248254772717213818807839122116342319394224327812228224419041726224950128546006908776081").unwrap(),
             c: BigNumber::from_dec("107139004283129840615455074936926563695810744359362642795914598982169317704824").unwrap()
         }
-    }
-
-    pub fn revocation_credential() -> NonRevocationCredentialSignature {
-        NonRevocationCredentialSignature {
-            sigma: PointG1::from_string("false 1D18E69FA5AA97421F4AEBE933B40264261C5440090222C6AC61FEBE2CFEAA04 1461756FB88E41A2CB508A7057318CAFB551F4CD0C7051CBEC23DDFBC92248BC 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            c: GroupOrderElement::from_string("1AF7987A73C0CC0780C60238E136EE1709BA0DACB681C7E461250DCBD902AA4C").unwrap(),
-            vr_prime_prime: GroupOrderElement::from_string("22901ECFBD8CAC21E4A041949CCAF01EDC1D555C1293FBD47D9C315785FAC643").unwrap(),
-            witness_signature: witness_signature(),
-            g_i: PointG1::from_string("false 15A85746D992E2E8E63447D76E63681DE743CB462817D7FA39B8A039A309E618 08271151A4DF81C629EE8E468968DDB4D3CD35D22342F7CEC6698A99317E892F 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            i: 1,
-            m2: GroupOrderElement::from_string("099A79BA1F6D7DD6247DBE701CAE80805BED79B043B875CBB37D412BFCA6D402").unwrap(),
-            }
-    }
-
-    fn witness_signature() -> WitnessSignature {
-        WitnessSignature {
-            sigma_i: PointG2::from_string("false 02680D6A364915CE54A5E1DA89E7F1530B9394D2756312D6D97F776B0F39CC6F 15DE23D8864E2703884B81CB93EC5E8EE75D59BF2A8957F1C853C7407A3AF9AC 06B72EAC18E9FF42298D7B9B7F220E00A944FFC1864755EBB79A70E82C370335 116BF610CC4368D001D9F0BE121EE8DF2C7F0BEE2F1B3FE954EAF36C13DFD06F 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8 0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-                u_i: PointG2::from_string("false 076EF2B88CFA0A0F9F6C0D64E2F4BFEEC60695568C8E8157E5D540513002E157 03D08363B8658101B730333849E25048B145260E33A289B8933AF7BD1F488386 19C0C5E9F4A319CD5C8066EAE01A470A6B1689449BA919077B04A7D1682403EB 1A521BBD8C9E9B456163E87CA6B06B0F55C616E3494EE75A089881CB0EA6BCE9 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8 0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-                g_i: PointG1::from_string("false 15A85746D992E2E8E63447D76E63681DE743CB462817D7FA39B8A039A309E618 08271151A4DF81C629EE8E468968DDB4D3CD35D22342F7CEC6698A99317E892F 0095E45DF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap()
-        }
-    }
-
-    pub fn witness() -> Witness {
-        Witness {
-            omega: PointG2::from_string("true 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0").unwrap()
-        }
-    }
-
-    pub fn credential_revocation_public_key() -> CredentialRevocationPublicKey {
-        CredentialRevocationPublicKey {
-            g: PointG1::from_string("false 03D433008A42E55FE3C6C4772D290EB3B0BF999F8281B4329E55033A32663625 0BDFD038889932B7C5CDD0BB846713710FBAB698201DFD4A380CDD1282E75060 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            g_dash: PointG2::from_string("false 1045C93522D11FB9EB69396032EEA008B857C7F8B3F2981C9917B1DFA8A00EC9 01AD44557A4240BB570FB94B33746C272CF921F33B4910B111F1CA48FCE34FC2 2265EAFAED9C22CD76C2FBD6FC3B88414B6B66FB4E31FCD1ED6AADE25A9D31EB 234B062F5159CB2E0782CFB75478E45D46EBF0F21E3CE7A2CD758687A73D5D08 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8 0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-            h: PointG1::from_string("false 00779206BDAB2E3F9CC3AEFC491606554D9DB1E635EE2622CB88667175CA0389 0BE9C24F028E14C25D779831200252C6A3810DD441563A3ED044828A0EA1F5BF 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            h0: PointG1::from_string("false 124B7A0EC17EAAB267EAD5B14BA9817F95D6ADBD2901D358B4933C17D09C6071 10B385CDBD3AE37E2B15A2BABE9B6A65CAF7B0266FFBCAB39DA8E89930CFE1F5 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            h1: PointG1::from_string("false 18FAE93FC4CB59CAF8EB9089BD2E3557A846B36ABF07423D38CF1F33AF40A4DA 135F13A5EE3A671FBB8686F5ED75208A7B21E60B5B17E130B0CD5759EEF41979 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            h2: PointG1::from_string("false 14E2B023E16BD5EFAB21C3B4E0F8DD9EDC0BAE8C7D54E53B788D5CC56428EF89 2455046265245AC7B96963FAF88388B80931A3A4A1789C999700E6F285C41285 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            htilde: PointG1::from_string("false 0C5D3DF7856F0C6A46ECFE1699691DC7A6BDBCB577EB811C3D582BEE15E40F43 072448B835886119629FD29ED7662FAAF0A46072DE824F624F1A7B137A4377D6 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            h_cap: PointG2::from_string("false 203CCE35A8D290493AF0EF4EAA52D70709E6E9D25F8B626B21B0E98941A9942D 2140127125274C73B172182F03F045DE38C0075111F6521C6D8AB16715394CDD 187548EFF78D6B382E10B857405FC959B7E60638D868DF52690FADD253156E41 0C4214C598DBD81107B849F8384584685EAEAC89006077D6936AD20973A751D5 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8 0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-            u: PointG2::from_string("false 052DA02C48E7D4EF773EA47DF30FEB879D28ED3EA259B657A9713D09F33637FB 076DB5DC50643AC85A5867CC0BBEA8D1B0C0181902F7ED9E356F2E46F37F2493 0B0E88CB9F09987275EC5AF187269BA763B98A7C7C4BDFE2F419546BDCD9526E 07E87398A50B8318C0A2C9F446C9831AEFA86C04234675F796CE9EDEBF811C03 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8 0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-            pk: PointG1::from_string("false 15D5FF3E86C2F9CEB0EB8967803C652A70919D57401F1A20486875FD1EFDF65B 1F9D0690B0A65C3EDD7F92B60620702EA103E42782946F176296FE763422BC77 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            y: PointG2::from_string("false 0844D621856F5A86017BD7993B71FF1931DBD5F81A0BDBAF1D07341C80BF77AC 10DC3E0107342500869DFB5028422FE8DE23E55EE6CC8AB29D0FA90387D334B0 21059570192BE05E2C9B32F9A9D5A56BC213E16E4D672A122088F19A33087AFC 03A4B1451CCB9E3CEF547973E52FD807074DDC98FB8FE81798739DB2AE7802B4 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8 0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-        }
-    }
-
-    pub fn credential_revocation_private_key() -> CredentialRevocationPrivateKey {
-        CredentialRevocationPrivateKey {
-            x: GroupOrderElement::from_string("17F6C5FC0B644FF12D490ADF6A0A2D3CD6461E05982D2E9CA5F01DC9349F3FC3").unwrap(),
-            sk: GroupOrderElement::from_string("00EBA7895708BE6EFE994C8712AC2ECA3E01A395F5DCD70CDF43B7F58080CAB8").unwrap()
-        }
-    }
-
-    pub fn revocation_key_public() -> RevocationKeyPublic {
-        RevocationKeyPublic {
-            z: Pair::from_string("BAF4F6C1044467 B355263E5FED41 8C0AF4C3EB94AF 3DE0C83ACA9928 2D6A7C6 FDF167021A1737 F7663EE5B2767B C5C4D3E69D387 34AA472296FCC7 B1660F7 C4741C69824558 CE22B92C952568 BB8179722E1BE7 1036505FEC026E 1C07F9FD DEAB5ECFD267CE 2E372388203E8D 973CB3DFAED87A EAB1BCFACB147E 12AC5746 BA65AD126B3FA5 1E1CF9FFC748E9 6017A982889E18 7AC0602B49C5E4 BAF574F 6CF7E2221ABC1 C4ABDFD08A7CD4 5CF4AB327CE15 3135590EE8EFC4 8192962 4FFCD9C89ABC45 3E0764B6CD0CF7 228E1021AA539B 8BA7447BCE3D7F F203473 DFB3E31073CDBD 7924EAC9D036C1 716066DCE76DC9 87B72FD4831A7 7296BA1 F417B8E0DAA939 9CA99939CB747E C79AC00D77664D D5C8F4836CDC28 1C615963 FD093CEBD6DED8 D16D939D4144E6 D209EEB27A2D40 E10AC83BFD60E4 4221B1A 535859DCF661A3 4A2F9EA4995F28 F9E4ECB0F4A21F CCB9D054387AF6 1B0A327E 20BF74410EF2D0 878F7EC03EA36B 76029AEF058F80 D988F4E307EC0E B9001C").unwrap()
-        }
-    }
-
-    pub fn revocation_key_private() -> RevocationKeyPrivate {
-        RevocationKeyPrivate {
-            gamma: GroupOrderElement::from_string("9A7934671787E7 B44902FD431283 E541AB2729B4F7 E4BDDF7F08FE77 19ADFD0").unwrap()
-        }
-    }
-
-    fn accumulator() -> Accumulator {
-        PointG2::from_string("false DABF1B89B584A1 6528C2CA3BB434 797565BB1CCB90 E63C6A6DC3C91A 24471A93 31D1B4E5C6F7E8 A4C48C9D1E4D0F BF10C3FBF53B80 27C94984204EFC 17DBA383 32F293DFC739DF 7E3DD3E71A4918 E2D84BF08244AE 3D7178DB477364 22738A3 3F9BCA3702EBD8 F8039636941D3C 1CE9B219CC559 9408F318813CCD 16C4CE4 FFFFFF7D07A8A8 FFFF7888802F07 FFC63D474548B7 F417D05FB10933 95E45DD 0 0 0 0 0").unwrap()
-    }
-
-    pub fn revocation_registry() -> RevocationRegistry {
-        RevocationRegistry {
-            accum: accumulator()
-        }
-    }
-
-    pub fn max_cred_num() -> u32 {
-        5
-    }
-
-    pub fn revocation_registry_delta() -> RevocationRegistryDelta {
-        RevocationRegistryDelta {
-            prev_accum: Some(PointG2::from_string("true 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0").unwrap()),
-            accum: accumulator(),
-            issued: hashset![1],
-            revoked: HashSet::new()
-        }
-    }
-
-    pub fn r_cnxt_m2() -> BigNumber {
-        BigNumber::from_dec("69500003785041890145270364348670634122591474903142468939711692725859480163330").unwrap()
     }
 }

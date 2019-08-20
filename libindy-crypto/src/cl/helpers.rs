@@ -1,7 +1,6 @@
 use bn::{BigNumber, BIGNUMBER_1};
 use cl::*;
 use errors::IndyCryptoError;
-use pair::GroupOrderElement;
 use super::constants::*;
 
 use std::cmp::max;
@@ -226,7 +225,7 @@ pub fn _gen_x(p: &BigNumber, q: &BigNumber) -> Result<BigNumber, IndyCryptoError
     Ok(x)
 }
 
-// 随机生成一个qr TODO:
+// 随机生成一个qr
 #[cfg(test)]
 pub fn random_qr(n: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     if MockHelper::is_injected() {
@@ -266,20 +265,6 @@ pub fn bitwise_or_big_int(a: &BigNumber, b: &BigNumber) -> Result<BigNumber, Ind
     trace!("Helpers::bitwise_or_big_int: <<<  res: {:?}", result);
 
     Ok(result)
-}
-
-//Byte order: Little
-pub fn transform_u32_to_array_of_u8(x: u32) -> Vec<u8> {
-    trace!("Helpers::transform_u32_to_array_of_u8: >>> x: {:?}", x);
-
-    let mut result: Vec<u8> = Vec::new();
-    for i in (0..4).rev() {
-        result.push((x >> i * 8) as u8);
-    }
-
-    trace!("Helpers::transform_u32_to_array_of_u8: <<< res: {:?}", result);
-
-    result
 }
 
 // 生成 \tilde{m_i} ，在翻译论文4.2节，目的是生成unrevealed属性盲化参数 
@@ -329,10 +314,9 @@ pub fn calc_teq(p_pub_key: &CredentialPrimaryPublicKey,
                 e: &BigNumber,
                 v: &BigNumber,
                 m_tilde: &HashMap<String, BigNumber>,
-                m2tilde: &BigNumber,
                 unrevealed_attrs: &HashSet<String>) -> Result<BigNumber, IndyCryptoError> {
-    trace!("Helpers::calc_teq: >>> p_pub_key: {:?}, p_pub_key: {:?}, e: {:?}, v: {:?}, m_tilde: {:?}, m2tilde: {:?}, \
-    unrevealed_attrs: {:?}", p_pub_key, a_prime, e, v, m_tilde, m2tilde, unrevealed_attrs);
+    trace!("Helpers::calc_teq: >>> p_pub_key: {:?}, p_pub_key: {:?}, e: {:?}, v: {:?}, m_tilde: {:?}, \
+    unrevealed_attrs: {:?}", p_pub_key, a_prime, e, v, m_tilde, unrevealed_attrs);
 
     let mut ctx = BigNumber::new_context()?;
     let mut result: BigNumber = a_prime
@@ -351,10 +335,6 @@ pub fn calc_teq(p_pub_key: &CredentialPrimaryPublicKey,
 
     result = p_pub_key.s
         .mod_exp(&v, &p_pub_key.n, Some(&mut ctx))?
-        .mod_mul(&result, &p_pub_key.n, Some(&mut ctx))?;
-
-    result = p_pub_key.rctxt
-        .mod_exp(&m2tilde, &p_pub_key.n, Some(&mut ctx))?
         .mod_mul(&result, &p_pub_key.n, Some(&mut ctx))?;
 
     trace!("Helpers::calc_teq: <<< t: {:?}", result);
@@ -494,105 +474,6 @@ pub fn four_squares(delta: i32) -> Result<HashMap<String, BigNumber>, IndyCrypto
     Ok(res)
 }
 
-pub fn group_element_to_bignum(el: &GroupOrderElement) -> Result<BigNumber, IndyCryptoError> {
-    Ok(BigNumber::from_bytes(&el.to_bytes()?)?)
-}
-
-pub fn bignum_to_group_element(num: &BigNumber) -> Result<GroupOrderElement, IndyCryptoError> {
-    Ok(GroupOrderElement::from_bytes(&num.to_bytes()?)?)
-}
-
-/// Verifier调用，先用 create_tau_list_values 函数得出模板值tau_list，再调用该函数得出最终验证值
-/// 用于验证 撤销
-pub fn create_tau_list_expected_values(r_pub_key: &CredentialRevocationPublicKey,
-                                       rev_reg: &RevocationRegistry,
-                                       rev_acc_pub_key: &RevocationKeyPublic,
-                                       proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
-    trace!("Helpers::create_tau_list_expected_values: >>> r_pub_key: {:?}, rev_reg: {:?}, rev_acc_pub_key: {:?}, proof_c: {:?}",
-           r_pub_key, rev_reg, rev_acc_pub_key, proof_c);
-
-    let t1 = proof_c.e;
-    let t2 = PointG1::new_inf()?;
-    let t3 = Pair::pair(&r_pub_key.h0.add(&proof_c.g)?, &r_pub_key.h_cap)?
-        .mul(&Pair::pair(&proof_c.a, &r_pub_key.y)?.inverse()?)?;
-    let t4 = Pair::pair(&proof_c.g, &rev_reg.accum)?
-        .mul(&Pair::pair(&r_pub_key.g, &proof_c.w)?.mul(&rev_acc_pub_key.z)?.inverse()?)?;
-    let t5 = proof_c.d;
-    let t6 = PointG1::new_inf()?;
-    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &proof_c.s)?
-        .mul(&Pair::pair(&r_pub_key.g, &r_pub_key.g_dash)?.inverse()?)?;
-    let t8 = Pair::pair(&proof_c.g, &r_pub_key.u)?
-        .mul(&Pair::pair(&r_pub_key.g, &proof_c.u)?.inverse()?)?;
-
-    let non_revoc_proof_tau_list = NonRevocProofTauList {
-        t1,
-        t2,
-        t3,
-        t4,
-        t5,
-        t6,
-        t7,
-        t8
-    };
-
-    trace!("Helpers::create_tau_list_expected_values: <<< non_revoc_proof_tau_list: {:?}", non_revoc_proof_tau_list);
-
-    Ok(non_revoc_proof_tau_list)
-}
-
-/// Prover和Verifier都调用该模板函数，得出模板值 tau_list
-pub fn create_tau_list_values(r_pub_key: &CredentialRevocationPublicKey,
-                              rev_reg: &RevocationRegistry,
-                              params: &NonRevocProofXList,
-                              proof_c: &NonRevocProofCList) -> Result<NonRevocProofTauList, IndyCryptoError> {
-    trace!("Helpers::create_tau_list_values: >>> r_pub_key: {:?}, rev_reg: {:?}, params: {:?}, proof_c: {:?}",
-           r_pub_key, rev_reg, params, proof_c);
-
-    let t1 = r_pub_key.h.mul(&params.rho)?.add(&r_pub_key.htilde.mul(&params.o)?)?;
-    let mut t2 = proof_c.e.mul(&params.c)?
-        .add(&r_pub_key.h.mul(&params.m.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&params.t.mod_neg()?)?)?;
-    if t2.is_inf()? {
-        t2 = PointG1::new_inf()?;
-    }
-    let t3 = Pair::pair(&proof_c.a, &r_pub_key.h_cap)?.pow(&params.c)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&params.r)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.y)?.pow(&params.rho)?
-            .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&params.m)?)?
-            .mul(&Pair::pair(&r_pub_key.h1, &r_pub_key.h_cap)?.pow(&params.m2)?)?
-            .mul(&Pair::pair(&r_pub_key.h2, &r_pub_key.h_cap)?.pow(&params.s)?)?.inverse()?)?;
-    let t4 = Pair::pair(&r_pub_key.htilde, &rev_reg.accum)?
-        .pow(&params.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&params.r_prime)?)?;
-    let t5 = r_pub_key.g.mul(&params.r)?.add(&r_pub_key.htilde.mul(&params.o_prime)?)?;
-    let mut t6 = proof_c.d.mul(&params.r_prime_prime)?
-        .add(&r_pub_key.g.mul(&params.m_prime.mod_neg()?)?)?
-        .add(&r_pub_key.htilde.mul(&params.t_prime.mod_neg()?)?)?;
-    if t6.is_inf()? {
-        t6 = PointG1::new_inf()?;
-    }
-    let t7 = Pair::pair(&r_pub_key.pk.add(&proof_c.g)?, &r_pub_key.h_cap)?.pow(&params.r_prime_prime)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &r_pub_key.h_cap)?.pow(&params.m_prime.mod_neg()?)?)?
-        .mul(&Pair::pair(&r_pub_key.htilde, &proof_c.s)?.pow(&params.r)?)?;
-    let t8 = Pair::pair(&r_pub_key.htilde, &r_pub_key.u)?.pow(&params.r)?
-        .mul(&Pair::pair(&r_pub_key.g.neg()?, &r_pub_key.h_cap)?.pow(&params.r_prime_prime_prime)?)?;
-
-    let non_revoc_proof_tau_list = NonRevocProofTauList {
-        t1,
-        t2,
-        t3,
-        t4,
-        t5,
-        t6,
-        t7,
-        t8
-    };
-
-    trace!("Helpers::create_tau_list_values: <<< non_revoc_proof_tau_list: {:?}", non_revoc_proof_tau_list);
-
-    Ok(non_revoc_proof_tau_list)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,13 +539,6 @@ mod tests {
     }
 
     #[test]
-    fn transform_u32_to_array_of_u8_works() {
-        let int = 0x74BA7445;
-        let answer = vec![0x74, 0xBA, 0x74, 0x45];
-        assert_eq!(transform_u32_to_array_of_u8(int), answer)
-    }
-
-    #[test]
     fn test_encode_attribute_fail_simple_collision_on_internal_truncate() {
         let ea3079 = encode_attribute("3079", ByteOrder::Big).unwrap();
         let ea6440 = encode_attribute("6440", ByteOrder::Big).unwrap();
@@ -721,24 +595,5 @@ mod tests {
         40515565389149016308077954851808706083095582109248170847463880536249366156605714267596752766\
         31839937087680336690781266325043663083854158029559611517721678702314741440737728022831823751\
         45256219426454149503998537986414519426715148839164974816475472185621648644891", res_data[5].to_dec().unwrap());
-    }
-
-    #[test]
-    fn calc_teq_works() {
-        let proof = prover::mocks::eq_proof();
-        let pk = issuer::mocks::credential_primary_public_key();
-        let unrevealed_attrs = prover::mocks::unrevealed_attrs();
-
-        let res = calc_teq(&pk, &proof.a_prime, &proof.e, &proof.v,
-                           &proof.m, &proof.m2, &unrevealed_attrs);
-
-        assert!(res.is_ok());
-        assert_eq!("91264240506826174927348047353965425159860757123338479073424113940259806551851229\
-        29223711966727033722604489188203150739124733516450682232344417480340482341559520998831392577\
-        94116014271631698674027316835357321996906259424466546451562774161140030976964596027597723555\
-        89838338098112196343083991333232435443953495090160789157756256594127180544038043918022344493\
-        84865179215464700548799307482303595441481342427878016310830209497605585249372185396761509717\
-        23513431038543455953776634428397886712772493416769127589401268192936635379602026733723945633\
-        53933943790374230983129060596346889726181201177754774157687114812348019929279", res.unwrap().to_dec().unwrap());
     }
 }

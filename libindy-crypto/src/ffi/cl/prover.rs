@@ -489,9 +489,6 @@ pub extern fn cl_blinded_credential_secrets_correctness_proof_free(blinded_crede
 /// * `credential_secrets_blinding_factors` - Credential secrets blinding factors instance pointer.
 /// * `credential_pub_key` - Credential public key instance pointer.
 /// * `nonce` -  Nonce instance pointer was used by Issuer for the creation of signature_correctness_proof.
-/// * `rev_key_pub` - (Optional) Revocation registry public key  instance pointer.
-/// * `rev_reg` - (Optional) Revocation registry  instance pointer.
-/// * `witness` - (Optional) Witness instance pointer.
 #[no_mangle]
 #[allow(unused_variables)]
 pub extern fn cl_prover_process_credential_signature(credential_signature: *const c_void,
@@ -499,19 +496,13 @@ pub extern fn cl_prover_process_credential_signature(credential_signature: *cons
                                                                  signature_correctness_proof: *const c_void,
                                                                  credential_secrets_blinding_factors: *const c_void,
                                                                  credential_pub_key: *const c_void,
-                                                                 credential_issuance_nonce: *const c_void,
-                                                                 rev_key_pub: *const c_void,
-                                                                 rev_reg: *const c_void,
-                                                                 witness: *const c_void) -> ErrorCode {
+                                                                 credential_issuance_nonce: *const c_void) -> ErrorCode {
     trace!("cl_prover_process_credential_signature: >>> credential_signature: {:?}\n\
                                                                     signature_correctness_proof: {:?}\n\
                                                                     credential_secrets_blinding_factors: {:?}\n\
                                                                     credential_pub_key: {:?}\n\
-                                                                    credential_issuance_nonce: {:?}\n\
-                                                                    rev_key_pub: {:?}\n\
-                                                                    rev_reg {:?}\n\
-                                                                    witness {:?}",
-           credential_signature, signature_correctness_proof, credential_secrets_blinding_factors, credential_pub_key, credential_issuance_nonce, rev_key_pub, rev_reg, witness);
+                                                                    credential_issuance_nonce: {:?}",
+           credential_signature, signature_correctness_proof, credential_secrets_blinding_factors, credential_pub_key, credential_issuance_nonce);
 
     check_useful_mut_c_reference!(credential_signature, CredentialSignature, ErrorCode::CommonInvalidParam1);
     check_useful_c_reference!(credential_values, CredentialValues, ErrorCode::CommonInvalidParam2);
@@ -519,69 +510,31 @@ pub extern fn cl_prover_process_credential_signature(credential_signature: *cons
     check_useful_c_reference!(credential_secrets_blinding_factors, CredentialSecretsBlindingFactors, ErrorCode::CommonInvalidParam4);
     check_useful_c_reference!(credential_pub_key, CredentialPublicKey, ErrorCode::CommonInvalidParam5);
     check_useful_c_reference!(credential_issuance_nonce, Nonce, ErrorCode::CommonInvalidParam6);
-    check_useful_opt_c_reference!(rev_key_pub, RevocationKeyPublic);
-    check_useful_opt_c_reference!(rev_reg, RevocationRegistry);
-    check_useful_opt_c_reference!(witness, Witness);
 
     trace!("cl_prover_process_credential_signature: >>> credential_signature: {:?}\n\
                                                                     credential_values: {:?}\n\
                                                                     signature_correctness_proof: {:?}\n\
                                                                     credential_secrets_blinding_factors: {:?}\n\
                                                                     credential_pub_key: {:?}\n\
-                                                                    credential_issuance_nonce: {:?}\n\
-                                                                    rev_key_pub: {:?}\n\
-                                                                    rev_reg {:?}, witness {:?}",
+                                                                    credential_issuance_nonce: {:?}",
                                                                     credential_signature,
                                                                     credential_values,
                                                                     signature_correctness_proof,
                                                                     credential_secrets_blinding_factors,
                                                                     credential_pub_key,
-                                                                    credential_issuance_nonce,
-                                                                    rev_key_pub,
-                                                                    rev_reg,
-                                                                    witness);
+                                                                    credential_issuance_nonce);
 
     let res = match Prover::process_credential_signature(credential_signature,
                                                          credential_values,
                                                          signature_correctness_proof,
                                                          credential_secrets_blinding_factors,
                                                          credential_pub_key,
-                                                         credential_issuance_nonce,
-                                                         rev_key_pub,
-                                                         rev_reg,
-                                                         witness) {
+                                                         credential_issuance_nonce) {
         Ok(()) => ErrorCode::Success,
         Err(err) => err.to_error_code()
     };
 
     trace!("cl_prover_process_credential_signature: <<< res: {:?}", res);
-    ErrorCode::Success
-}
-
-#[no_mangle]
-#[allow(unused_variables)]
-pub extern fn cl_prover_get_credential_revocation_index(credential_signature: *const c_void,
-                                                                    cred_rev_indx: *mut u32) -> ErrorCode {
-    trace!("cl_prover_get_credential_revocation_index: >>> credential_signature: {:?}, cred_rev_indx: {:?}",
-           credential_signature, cred_rev_indx);
-
-    check_useful_c_reference!(credential_signature, CredentialSignature, ErrorCode::CommonInvalidParam1);
-
-    trace!("cl_prover_get_credential_revocation_index: >>> credential_signature: {:?}", credential_signature);
-
-    let res = match credential_signature.extract_index() {
-        Some(index) => {
-            trace!("cl_prover_get_credential_revocation_index: index: {:?}", index);
-            unsafe {
-                *cred_rev_indx = index;
-            }
-            trace!("cl_prover_get_credential_revocation_index: *cred_rev_indx: {:?}", cred_rev_indx);
-            ErrorCode::Success
-        }
-        None => ErrorCode::CommonInvalidState
-    };
-
-    trace!("cl_prover_get_credential_revocation_index: <<< res: {:?}", res);
     ErrorCode::Success
 }
 
@@ -626,8 +579,6 @@ pub extern fn cl_prover_new_proof_builder(proof_builder_p: *mut *const c_void) -
 /// * `credential_signature` - Reference that contains the credential signature pointer.
 /// * `credential_values` - Reference that contains credential values instance pointer.
 /// * `credential_pub_key` - Reference that contains credential public key instance pointer.
-/// * `rev_reg` - (Optional) Reference that will contain revocation registry public instance pointer.
-/// * `witness` - (Optional) Reference that will contain witness instance pointer.
 #[no_mangle]
 pub extern fn cl_proof_builder_add_sub_proof_request(proof_builder: *const c_void,
                                                                  sub_proof_request: *const c_void,
@@ -635,27 +586,21 @@ pub extern fn cl_proof_builder_add_sub_proof_request(proof_builder: *const c_voi
                                                                  non_credential_schema: *const c_void,
                                                                  credential_signature: *const c_void,
                                                                  credential_values: *const c_void,
-                                                                 credential_pub_key: *const c_void,
-                                                                 rev_reg: *const c_void,
-                                                                 witness: *const c_void) -> ErrorCode {
+                                                                 credential_pub_key: *const c_void) -> ErrorCode {
     trace!("cl_proof_builder_add_sub_proof_request: >>> proof_builder: {:?}, \
                                                                     sub_proof_request: {:?}, \
                                                                     credential_schema: {:?}, \
                                                                     non_credential_schema: {:?}, \
                                                                     credential_signature: {:?}, \
                                                                     credential_values: {:?}, \
-                                                                    credential_pub_key: {:?}, \
-                                                                    rev_reg: {:?}, \
-                                                                    witness: {:?}",
+                                                                    credential_pub_key: {:?}",
                     proof_builder,
                     sub_proof_request,
                     credential_schema,
                     non_credential_schema,
                     credential_signature,
                     credential_values,
-                    credential_pub_key,
-                    rev_reg,
-                    witness);
+                    credential_pub_key);
 
     check_useful_mut_c_reference!(proof_builder, ProofBuilder, ErrorCode::CommonInvalidParam1);
     check_useful_c_reference!(sub_proof_request, SubProofRequest, ErrorCode::CommonInvalidParam2);
@@ -664,8 +609,6 @@ pub extern fn cl_proof_builder_add_sub_proof_request(proof_builder: *const c_voi
     check_useful_c_reference!(credential_signature, CredentialSignature, ErrorCode::CommonInvalidParam5);
     check_useful_c_reference!(credential_values, CredentialValues, ErrorCode::CommonInvalidParam6);
     check_useful_c_reference!(credential_pub_key, CredentialPublicKey, ErrorCode::CommonInvalidParam7);
-    check_useful_opt_c_reference!(rev_reg, RevocationRegistry);
-    check_useful_opt_c_reference!(witness, Witness);
 
     trace!("cl_proof_builder_add_sub_proof_request: entities: proof_builder: {:?}, \
                                                                           sub_proof_request: {:?}, \
@@ -673,27 +616,21 @@ pub extern fn cl_proof_builder_add_sub_proof_request(proof_builder: *const c_voi
                                                                           non_credential_schema: {:?}, \
                                                                           credential_signature: {:?}, \
                                                                           credential_values: {:?}, \
-                                                                          credential_pub_key: {:?}, \
-                                                                          rev_reg: {:?}, \
-                                                                          witness: {:?}",
+                                                                          credential_pub_key: {:?}",
            proof_builder,
            sub_proof_request,
            credential_schema,
            non_credential_schema,
            credential_signature,
            credential_values,
-           credential_pub_key,
-           rev_reg,
-           witness);
+           credential_pub_key);
 
     let res = match proof_builder.add_sub_proof_request(sub_proof_request,
                                                         credential_schema,
                                                         non_credential_schema,
                                                         credential_signature,
                                                         credential_values,
-                                                        credential_pub_key,
-                                                        rev_reg,
-                                                        witness) {
+                                                        credential_pub_key) {
         Ok(()) => ErrorCode::Success,
         Err(err) => err.to_error_code()
     };
@@ -983,10 +920,7 @@ mod tests {
                                       credential_secrets_blinding_factors,
                                       credential_values,
                                       credential_pub_key,
-                                      credential_issuance_nonce,
-                                      ptr::null(),
-                                      ptr::null(),
-                                      ptr::null());
+                                      credential_issuance_nonce);
         let proof_builder = _proof_builder();
 
         let err_code = cl_proof_builder_add_sub_proof_request(proof_builder,
@@ -995,9 +929,7 @@ mod tests {
                                                                           non_credential_schema,
                                                                           credential_signature,
                                                                           credential_values,
-                                                                          credential_pub_key,
-                                                                          ptr::null(),
-                                                                          ptr::null());
+                                                                          credential_pub_key);
         assert_eq!(err_code, ErrorCode::Success);
 
         let nonce = _nonce();
@@ -1167,10 +1099,7 @@ mod tests {
                                                                           signature_correctness_proof,
                                                                           credential_secrets_blinding_factors,
                                                                           credential_pub_key,
-                                                                          credential_issuance_nonce,
-                                                                          ptr::null(),
-                                                                          ptr::null(),
-                                                                          ptr::null());
+                                                                          credential_issuance_nonce);
         assert_eq!(err_code, ErrorCode::Success);
 
         _free_credential_def(credential_pub_key, credential_priv_key, credential_key_correctness_proof);
@@ -1221,10 +1150,7 @@ mod tests {
                                       credential_secrets_blinding_factors,
                                       credential_values,
                                       credential_pub_key,
-                                      credential_issuance_nonce,
-                                      ptr::null(),
-                                      ptr::null(),
-                                      ptr::null());
+                                      credential_issuance_nonce);
         let proof_builder = _proof_builder();
 
         let err_code = cl_proof_builder_add_sub_proof_request(proof_builder,
@@ -1233,9 +1159,7 @@ mod tests {
                                                                           non_credential_schema,
                                                                           credential_signature,
                                                                           credential_values,
-                                                                          credential_pub_key,
-                                                                          ptr::null(),
-                                                                          ptr::null());
+                                                                          credential_pub_key);
         assert_eq!(err_code, ErrorCode::Success);
 
         let nonce = _nonce();
@@ -1281,18 +1205,13 @@ mod tests {
                                       credential_secrets_blinding_factors,
                                       credential_values,
                                       credential_pub_key,
-                                      credential_issuance_nonce,
-                                      ptr::null(),
-                                      ptr::null(),
-                                      ptr::null());
+                                      credential_issuance_nonce);
 
         let proof_building_nonce = _nonce();
         let proof = _proof(credential_pub_key,
                            credential_signature,
                            proof_building_nonce,
-                           credential_values,
-                           ptr::null(),
-                           ptr::null());
+                           credential_values);
 
         let mut proof_json_p: *const c_char = ptr::null();
         let err_code = cl_proof_to_json(proof, &mut proof_json_p);
@@ -1331,18 +1250,13 @@ mod tests {
                                       credential_secrets_blinding_factors,
                                       credential_values,
                                       credential_pub_key,
-                                      credential_issuance_nonce,
-                                      ptr::null(),
-                                      ptr::null(),
-                                      ptr::null());
+                                      credential_issuance_nonce);
 
         let proof_building_nonce = _nonce();
         let proof = _proof(credential_pub_key,
                            credential_signature,
                            proof_building_nonce,
-                           credential_values,
-                           ptr::null(),
-                           ptr::null());
+                           credential_values);
 
         let mut proof_json_p: *const c_char = ptr::null();
         let err_code = cl_proof_to_json(proof, &mut proof_json_p);
@@ -1385,18 +1299,13 @@ mod tests {
                                       credential_secrets_blinding_factors,
                                       credential_values,
                                       credential_pub_key,
-                                      credential_issuance_nonce,
-                                      ptr::null(),
-                                      ptr::null(),
-                                      ptr::null());
+                                      credential_issuance_nonce);
 
         let proof_building_nonce = _nonce();
         let proof = _proof(credential_pub_key,
                            credential_signature,
                            proof_building_nonce,
-                           credential_values,
-                           ptr::null(),
-                           ptr::null());
+                           credential_values);
 
         _free_credential_def(credential_pub_key, credential_priv_key, credential_key_correctness_proof);
         _free_blinded_credential_secrets(blinded_credential_secrets, credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof);
@@ -1407,45 +1316,6 @@ mod tests {
 
         let err_code = cl_proof_free(proof);
         assert_eq!(err_code, ErrorCode::Success);
-    }
-
-    #[test]
-    fn cl_prover_get_credential_revocation_index_works() {
-        let (credential_pub_key, credential_priv_key, credential_key_correctness_proof) = _credential_def();
-        let (rev_key_pub, rev_key_priv, rev_reg, rev_tails_generator) = _revocation_registry_def(credential_pub_key);
-        let credential_values = _credential_values();
-        let credential_nonce = _nonce();
-        let (blinded_credential_secrets, credential_secrets_blinding_factors,
-            blinded_credential_secrets_correctness_proof) = _blinded_credential_secrets(credential_pub_key,
-                                                                              credential_key_correctness_proof,
-                                                                              credential_values,
-                                                                              credential_nonce);
-        let credential_issuance_nonce = _nonce();
-        let tail_storage = FFISimpleTailStorage::new(rev_tails_generator);
-
-        let (credential_signature, signature_correctness_proof, _) =
-            _credential_signature_with_revoc(blinded_credential_secrets,
-                                             blinded_credential_secrets_correctness_proof,
-                                             credential_nonce,
-                                             credential_issuance_nonce,
-                                             credential_values,
-                                             credential_pub_key,
-                                             credential_priv_key,
-                                             rev_key_priv,
-                                             rev_reg,
-                                             tail_storage.get_ctx());
-
-        let mut cred_rev_idx_p: u32 = 0;
-        let err_code = cl_prover_get_credential_revocation_index(credential_signature, &mut cred_rev_idx_p);
-        assert_eq!(err_code, ErrorCode::Success);
-
-        _free_credential_def(credential_pub_key, credential_priv_key, credential_key_correctness_proof);
-        _free_revocation_registry_def(rev_key_pub, rev_key_priv, rev_reg, rev_tails_generator);
-        _free_credential_values(credential_values);
-        _free_blinded_credential_secrets(blinded_credential_secrets, credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof);
-        _free_nonce(credential_nonce);
-        _free_nonce(credential_issuance_nonce);
-        _free_credential_signature(credential_signature, signature_correctness_proof);
     }
 }
 
@@ -1511,18 +1381,14 @@ pub mod mocks {
                                          credential_secrets_blinding_factors: *const c_void,
                                          credential_values: *const c_void,
                                          credential_pub_key: *const c_void,
-                                         credential_issuance_nonce: *const c_void,
-                                         rev_key_pub: *const c_void, rev_reg: *const c_void, witness: *const c_void) {
+                                         credential_issuance_nonce: *const c_void) {
 
         let err_code = cl_prover_process_credential_signature(credential_signature,
                                                                           credential_values,
                                                                           signature_correctness_proof,
                                                                           credential_secrets_blinding_factors,
                                                                           credential_pub_key,
-                                                                          credential_issuance_nonce,
-                                                                          rev_key_pub,
-                                                                          rev_reg,
-                                                                          witness);
+                                                                          credential_issuance_nonce);
         assert_eq!(err_code, ErrorCode::Success);
     }
 
@@ -1544,8 +1410,7 @@ pub mod mocks {
     }
 
     pub fn _proof(credential_pub_key: *const c_void, credential_signature: *const c_void,
-                  nonce: *const c_void, credential_values: *const c_void,
-                  rev_reg: *const c_void, witness: *const c_void) -> *const c_void {
+                  nonce: *const c_void, credential_values: *const c_void) -> *const c_void {
         let proof_builder = _proof_builder();
         let credential_schema = _credential_schema();
         let non_credential_schema = _non_credential_schema();
@@ -1557,9 +1422,7 @@ pub mod mocks {
                                                            non_credential_schema,
                                                            credential_signature,
                                                            credential_values,
-                                                           credential_pub_key,
-                                                           rev_reg,
-                                                           witness);
+                                                           credential_pub_key);
 
         let mut proof: *const c_void = ptr::null();
         let err_code = cl_proof_builder_finalize(proof_builder,

@@ -45,26 +45,6 @@ macro_rules! check_useful_mut_c_reference {
     }
 }
 
-macro_rules! check_useful_opt_c_reference {
-    ($ptr:ident, $type:ty) => {
-        let $ptr: Option<&$type> = if $ptr.is_null() {
-            None
-        } else {
-            Some(unsafe { & *($ptr as *const $type) })
-        };
-    }
-}
-
-macro_rules! check_useful_hashset {
-    ($ptr:ident, $len:expr, $err1:expr, $err2:expr) => {
-        if $ptr.is_null() {
-            return $err1
-        }
-
-        let $ptr = HashSet::from_iter( unsafe {  slice::from_raw_parts($ptr, $len) }.iter().cloned());
-    }
-}
-
 macro_rules! check_useful_c_ptr {
     ($ptr:ident, $err1:expr) => {
         if $ptr.is_null() {

@@ -13,7 +13,6 @@ pub mod verifier;
 
 use bn::BigNumber;
 use errors::IndyCryptoError;
-use pair::*;
 
 use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
 use std::hash::Hash;
@@ -253,15 +252,13 @@ impl CredentialValuesBuilder {
 /// Issuer keys have global identifier that must be known to all parties.
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct CredentialPublicKey {
-    p_key: CredentialPrimaryPublicKey,
-    r_key: Option<CredentialRevocationPublicKey>,
+    p_key: CredentialPrimaryPublicKey
 }
 
 impl CredentialPublicKey {
     pub fn clone(&self) -> Result<CredentialPublicKey, IndyCryptoError> {
         Ok(CredentialPublicKey {
-            p_key: self.p_key.clone()?,
-            r_key: self.r_key.clone()
+            p_key: self.p_key.clone()?
         })
     }
 
@@ -269,14 +266,9 @@ impl CredentialPublicKey {
         Ok(self.p_key.clone()?)
     }
 
-    pub fn get_revocation_key(&self) -> Result<Option<CredentialRevocationPublicKey>, IndyCryptoError> {
-        Ok(self.r_key.clone())
-    }
-
-    pub fn build_from_parts(p_key: &CredentialPrimaryPublicKey, r_key: Option<&CredentialRevocationPublicKey>) -> Result<CredentialPublicKey, IndyCryptoError> {
+    pub fn build_from_parts(p_key: &CredentialPrimaryPublicKey) -> Result<CredentialPublicKey, IndyCryptoError> {
         Ok(CredentialPublicKey {
-            p_key: p_key.clone()?,
-            r_key: r_key.map(|key| key.clone())
+            p_key: p_key.clone()?
         })
     }
 }
@@ -285,8 +277,7 @@ impl CredentialPublicKey {
 /// One for signing primary credentials and second for signing non-revocation credentials.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CredentialPrivateKey {
-    p_key: CredentialPrimaryPrivateKey,
-    r_key: Option<CredentialRevocationPrivateKey>,
+    p_key: CredentialPrimaryPrivateKey
 }
 
 /// Issuer's "Public Key" is used to verify the Issuer's signature over the Credential's attributes' values (primary credential).
@@ -295,7 +286,6 @@ pub struct CredentialPrimaryPublicKey {
     n: BigNumber,
     s: BigNumber,
     r: HashMap<String /* attr_name */, BigNumber>,
-    rctxt: BigNumber,
     z: BigNumber
 }
 
@@ -305,7 +295,6 @@ impl CredentialPrimaryPublicKey {
             n: self.n.clone()?,
             s: self.s.clone()?,
             r: clone_bignum_map(&self.r)?,
-            rctxt: self.rctxt.clone()?,
             z: self.z.clone()?
         })
     }
@@ -318,7 +307,6 @@ impl <'a> ::serde::de::Deserialize<'a> for CredentialPrimaryPublicKey {
             n: BigNumber,
             s: BigNumber,
             r: HashMap<String /* attr_name */, BigNumber>,
-            rctxt: BigNumber,
             #[serde(default)]
             rms: BigNumber,
             z: BigNumber
@@ -331,7 +319,6 @@ impl <'a> ::serde::de::Deserialize<'a> for CredentialPrimaryPublicKey {
         Ok(CredentialPrimaryPublicKey {
             n: helper.n,
             s: helper.s,
-            rctxt: helper.rctxt,
             z: helper.z,
             r: helper.r
         })
@@ -360,308 +347,23 @@ pub struct CredentialKeyCorrectnessProof {
     xr_cap: Vec<(String, BigNumber)>,
 }
 
-/// `Revocation Public Key` is used to verify that credential was'nt revoked by Issuer.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct CredentialRevocationPublicKey {
-    g: PointG1,
-    g_dash: PointG2,
-    h: PointG1,
-    h0: PointG1,
-    h1: PointG1,
-    h2: PointG1,
-    htilde: PointG1,
-    h_cap: PointG2,
-    u: PointG2,
-    pk: PointG1,
-    y: PointG2,
-}
-
-/// `Revocation Private Key` is used for signing Credential.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct CredentialRevocationPrivateKey {
-    x: GroupOrderElement,
-    sk: GroupOrderElement
-}
-
-pub type Accumulator = PointG2;
-
-/// `Revocation Registry` contains accumulator.
-/// Must be published by Issuer on a tamper-evident and highly available storage
-/// Used by prover to prove that a credential hasn't revoked by the issuer
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RevocationRegistry {
-    accum: Accumulator
-}
-
-impl From<RevocationRegistryDelta> for RevocationRegistry {
-    fn from(rev_reg_delta: RevocationRegistryDelta) -> RevocationRegistry {
-        RevocationRegistry { accum: rev_reg_delta.accum }
-    }
-}
-
-/// `Revocation Registry Delta` contains Accumulator changes.
-/// Must be applied to `Revocation Registry`
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RevocationRegistryDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    prev_accum: Option<Accumulator>,
-    accum: Accumulator,
-    #[serde(skip_serializing_if = "HashSet::is_empty")]
-    #[serde(default)]
-    issued: HashSet<u32>,
-    #[serde(skip_serializing_if = "HashSet::is_empty")]
-    #[serde(default)]
-    revoked: HashSet<u32>
-}
-
-impl RevocationRegistryDelta {
-    pub fn from_parts(rev_reg_from: Option<&RevocationRegistry>,
-                      rev_reg_to: &RevocationRegistry,
-                      issued: &HashSet<u32>,
-                      revoked: &HashSet<u32>) -> RevocationRegistryDelta {
-        RevocationRegistryDelta {
-            prev_accum: rev_reg_from.map(|rev_reg| rev_reg.accum),
-            accum: rev_reg_to.accum.clone(),
-            issued: issued.clone(),
-            revoked: revoked.clone()
-        }
-    }
-
-    pub fn merge(&mut self, other_delta: &RevocationRegistryDelta) -> Result<(), IndyCryptoError> {
-        if other_delta.prev_accum.is_none() || self.accum != other_delta.prev_accum.unwrap() {
-            return Err(IndyCryptoError::InvalidStructure(format!("Deltas can not be merged.")));
-        }
-
-        self.accum = other_delta.accum;
-
-        self.issued.extend(
-            other_delta.issued.difference(&self.revoked));
-
-        self.revoked.extend(
-            other_delta.revoked.difference(&self.issued));
-
-        for index in other_delta.revoked.iter() {
-            self.issued.remove(index);
-        }
-
-        for index in other_delta.issued.iter() {
-            self.revoked.remove(index);
-        }
-
-        Ok(())
-    }
-}
-
-/// `Revocation Key Public` Accumulator public key.
-/// Must be published together with Accumulator
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RevocationKeyPublic {
-    z: Pair
-}
-
-/// `Revocation Key Private` Accumulator primate key.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct RevocationKeyPrivate {
-    gamma: GroupOrderElement
-}
-
-/// `Tail` point of curve used to update accumulator.
-pub type Tail = PointG2;
-
-impl Tail {
-    fn new_tail(index: u32, g_dash: &PointG2, gamma: &GroupOrderElement) -> Result<Tail, IndyCryptoError> {
-        let i_bytes = helpers::transform_u32_to_array_of_u8(index);
-        let mut pow = GroupOrderElement::from_bytes(&i_bytes)?;
-        pow = gamma.pow_mod(&pow)?;
-        Ok(g_dash.mul(&pow)?)
-    }
-}
-
-/// Generator of `Tail's`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RevocationTailsGenerator {
-    size: u32,
-    current_index: u32,
-    g_dash: PointG2,
-    gamma: GroupOrderElement
-}
-
-impl RevocationTailsGenerator {
-    fn new(max_cred_num: u32, gamma: GroupOrderElement, g_dash: PointG2) -> Self {
-        RevocationTailsGenerator {
-            size: 2 * max_cred_num + 1, /* Unused 0th + valuable 1..L + unused (L+1)th + valuable (L+2)..(2L) */
-            current_index: 0,
-            gamma,
-            g_dash,
-        }
-    }
-
-    pub fn count(&self) -> u32 {
-        self.size - self.current_index
-    }
-
-    pub fn next(&mut self) -> Result<Option<Tail>, IndyCryptoError> {
-        if self.current_index >= self.size {
-            return Ok(None);
-        }
-
-        let tail = Tail::new_tail(self.current_index, &self.g_dash, &self.gamma)?;
-
-        self.current_index += 1;
-
-        Ok(Some(tail))
-    }
-}
-
-pub trait RevocationTailsAccessor {
-    fn access_tail(&self, tail_id: u32, accessor: &mut FnMut(&Tail)) -> Result<(), IndyCryptoError>;
-}
-
-/// Simple implementation of `RevocationTailsAccessor` that stores all tails as BTreeMap.
-#[derive(Debug, Clone)]
-pub struct SimpleTailsAccessor {
-    tails: Vec<Tail>
-}
-
-impl RevocationTailsAccessor for SimpleTailsAccessor {
-    fn access_tail(&self, tail_id: u32, accessor: &mut FnMut(&Tail)) -> Result<(), IndyCryptoError> {
-        Ok(accessor(&self.tails[tail_id as usize]))
-    }
-}
-
-impl SimpleTailsAccessor {
-    pub fn new(rev_tails_generator: &mut RevocationTailsGenerator) -> Result<SimpleTailsAccessor, IndyCryptoError> {
-        let mut tails: Vec<Tail> = Vec::new();
-        while let Some(tail) = rev_tails_generator.next()? {
-            tails.push(tail);
-        }
-        Ok(SimpleTailsAccessor { tails })
-    }
-}
-
-
 /// Issuer's signature over Credential attribute values.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CredentialSignature {
     p_credential: PrimaryCredentialSignature,
-    r_credential: Option<NonRevocationCredentialSignature> /* will be used to proof is credential revoked preparation */,
-}
-
-impl CredentialSignature {
-    pub fn extract_index(&self) -> Option<u32> {
-        self.r_credential
-            .as_ref()
-            .map(|r_credential| r_credential.i)
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PrimaryCredentialSignature {
-    m_2: BigNumber,
     a: BigNumber,
     e: BigNumber,
     v: BigNumber
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct NonRevocationCredentialSignature {
-    sigma: PointG1,
-    c: GroupOrderElement,
-    vr_prime_prime: GroupOrderElement,
-    witness_signature: WitnessSignature,
-    g_i: PointG1,
-    i: u32,
-    m2: GroupOrderElement
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SignatureCorrectnessProof {
     se: BigNumber,
     c: BigNumber
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Witness {
-    omega: PointG2
-}
-
-impl Witness {
-    pub fn new<RTA>(rev_idx: u32,
-                    max_cred_num: u32,
-                    issuance_by_default: bool,
-                    rev_reg_delta: &RevocationRegistryDelta,
-                    rev_tails_accessor: &RTA) -> Result<Witness, IndyCryptoError> where RTA: RevocationTailsAccessor {
-        trace!("Witness::new: >>> rev_idx: {:?}, max_cred_num: {:?}, issuance_by_default: {:?}, rev_reg_delta: {:?}",
-               rev_idx, max_cred_num, issuance_by_default, rev_reg_delta);
-
-        let mut omega = PointG2::new_inf()?;
-
-        let mut issued = if issuance_by_default {
-            (1..max_cred_num + 1).collect::<HashSet<u32>>()
-                .difference(&rev_reg_delta.revoked).cloned().collect::<HashSet<u32>>()
-        } else {
-            rev_reg_delta.issued.clone()
-        };
-
-        issued.remove(&rev_idx);
-        for j in issued.iter() {
-            let index = max_cred_num + 1 - j + rev_idx;
-            rev_tails_accessor.access_tail(index, &mut |tail| {
-                omega = omega.add(tail).unwrap();
-            })?;
-        }
-
-        let witness = Witness { omega };
-
-        trace!("Witness::new: <<< witness: {:?}", witness);
-
-        Ok(witness)
-    }
-
-    pub fn update<RTA>(&mut self,
-                       rev_idx: u32,
-                       max_cred_num: u32,
-                       rev_reg_delta: &RevocationRegistryDelta,
-                       rev_tails_accessor: &RTA) -> Result<(), IndyCryptoError> where RTA: RevocationTailsAccessor {
-        trace!("Witness::update: >>> rev_idx: {:?}, max_cred_num: {:?}, rev_reg_delta: {:?}",
-               rev_idx, max_cred_num, rev_reg_delta);
-
-        let mut omega_denom = PointG2::new_inf()?;
-        for j in rev_reg_delta.revoked.iter() {
-            if rev_idx.eq(j) { continue; }
-
-            let index = max_cred_num + 1 - j + rev_idx;
-            rev_tails_accessor.access_tail(index, &mut |tail| {
-                omega_denom = omega_denom.add(tail).unwrap();
-            })?;
-        }
-
-        let mut omega_num = PointG2::new_inf()?;
-        for j in rev_reg_delta.issued.iter() {
-            if rev_idx.eq(j) { continue; }
-
-            let index = max_cred_num + 1 - j + rev_idx;
-            rev_tails_accessor.access_tail(index, &mut |tail| {
-                omega_num = omega_num.add(tail).unwrap();
-            })?;
-        }
-
-        let new_omega: PointG2 = self.omega.add(&omega_num.sub(&omega_denom)?)?;
-
-        self.omega = new_omega;
-
-        trace!("Witness::update: <<<");
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct WitnessSignature {
-    sigma_i: PointG2,
-    u_i: PointG2,
-    g_i: PointG1
 }
 
 /// Secret key encoded in a credential that is used to prove that prover owns the credential; can be used to
@@ -688,7 +390,6 @@ impl MasterSecret {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct BlindedCredentialSecrets {
     u: BigNumber,
-    ur: Option<PointG1>,
     hidden_attributes: BTreeSet<String>,
     committed_attributes: BTreeMap<String, BigNumber>
 }
@@ -696,8 +397,7 @@ pub struct BlindedCredentialSecrets {
 /// `CredentialSecretsBlindingFactors` used by Prover for post processing of credentials received from Issuer.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CredentialSecretsBlindingFactors {
-    v_prime: BigNumber,
-    vr_prime: Option<GroupOrderElement>
+    v_prime: BigNumber
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -706,12 +406,6 @@ pub struct PrimaryBlindedCredentialSecretsFactors {
     v_prime: BigNumber,
     hidden_attributes: BTreeSet<String>,
     committed_attributes: BTreeMap<String, BigNumber>,
-}
-
-#[derive(Debug)]
-pub struct RevocationBlindedCredentialSecretsFactors {
-    ur: PointG1,
-    vr_prime: GroupOrderElement,
 }
 
 #[derive(Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -831,8 +525,7 @@ pub struct Proof {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SubProof {
-    primary_proof: PrimaryProof,
-    non_revoc_proof: Option<NonRevocProof>
+    primary_proof: PrimaryProof
 }
 
 #[derive(Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -853,8 +546,7 @@ pub struct PrimaryEqualProof {
     a_prime: BigNumber,
     e: BigNumber,
     v: BigNumber,
-    m: HashMap<String /* attr_name of all except revealed */, BigNumber>,
-    m2: BigNumber
+    m: HashMap<String /* attr_name of all except revealed */, BigNumber>
 }
 
 impl <'a> ::serde::de::Deserialize<'a> for PrimaryEqualProof {
@@ -867,8 +559,7 @@ impl <'a> ::serde::de::Deserialize<'a> for PrimaryEqualProof {
             v: BigNumber,
             m: HashMap<String /* attr_name of all except revealed */, BigNumber>,
             #[serde(default)]
-            m1: BigNumber,
-            m2: BigNumber
+            m1: BigNumber
         }
 
         let mut helper = PrimaryEqualProofV1::deserialize(deserializer)?;
@@ -880,8 +571,7 @@ impl <'a> ::serde::de::Deserialize<'a> for PrimaryEqualProof {
             a_prime: helper.a_prime,
             e: helper.e,
             v: helper.v,
-            m: helper.m,
-            m2: helper.m2
+            m: helper.m
         })
     }
 }
@@ -896,16 +586,9 @@ pub struct PrimaryPredicateInequalityProof {
     predicate: Predicate
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct NonRevocProof {
-    x_list: NonRevocProofXList,
-    c_list: NonRevocProofCList
-}
-
 #[derive(Debug)]
 pub struct InitProof {
     primary_init_proof: PrimaryInitProof,
-    non_revoc_init_proof: Option<NonRevocInitProof>,
     credential_values: CredentialValues,
     sub_proof_request: SubProofRequest,
     credential_schema: CredentialSchema,
@@ -937,26 +620,6 @@ impl PrimaryInitProof {
     }
 }
 
-#[derive(Debug)]
-pub struct NonRevocInitProof {
-    c_list_params: NonRevocProofXList,
-    tau_list_params: NonRevocProofXList,
-    c_list: NonRevocProofCList,
-    tau_list: NonRevocProofTauList
-}
-
-impl NonRevocInitProof {
-    pub fn as_c_list(&self) -> Result<Vec<Vec<u8>>, IndyCryptoError> {
-        let vec = self.c_list.as_list()?;
-        Ok(vec)
-    }
-
-    pub fn as_tau_list(&self) -> Result<Vec<Vec<u8>>, IndyCryptoError> {
-        let vec = self.tau_list.as_slice()?;
-        Ok(vec)
-    }
-}
-
 #[derive(Debug, Eq, PartialEq)]
 pub struct PrimaryEqualInitProof {
     a_prime: BigNumber,
@@ -965,9 +628,7 @@ pub struct PrimaryEqualInitProof {
     e_prime: BigNumber,
     v_tilde: BigNumber,
     v_prime: BigNumber,
-    m_tilde: HashMap<String, BigNumber>,
-    m2_tilde: BigNumber,
-    m2: BigNumber,
+    m_tilde: HashMap<String, BigNumber>
 }
 
 impl PrimaryEqualInitProof {
@@ -1003,116 +664,6 @@ impl PrimaryPredicateInequalityInitProof {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct NonRevocProofXList {
-    rho: GroupOrderElement,
-    r: GroupOrderElement,
-    r_prime: GroupOrderElement,
-    r_prime_prime: GroupOrderElement,
-    r_prime_prime_prime: GroupOrderElement,
-    o: GroupOrderElement,
-    o_prime: GroupOrderElement,
-    m: GroupOrderElement,
-    m_prime: GroupOrderElement,
-    t: GroupOrderElement,
-    t_prime: GroupOrderElement,
-    m2: GroupOrderElement,
-    s: GroupOrderElement,
-    c: GroupOrderElement
-}
-
-impl NonRevocProofXList {
-    pub fn as_list(&self) -> Result<Vec<GroupOrderElement>, IndyCryptoError> {
-        Ok(vec![
-            self.rho,
-            self.o,
-            self.c,
-            self.o_prime,
-            self.m,
-            self.m_prime,
-            self.t,
-            self.t_prime,
-            self.m2,
-            self.s,
-            self.r,
-            self.r_prime,
-            self.r_prime_prime,
-            self.r_prime_prime_prime,
-        ])
-    }
-
-    pub fn from_list(seq: Vec<GroupOrderElement>) -> NonRevocProofXList {
-        NonRevocProofXList {
-            rho: seq[0],
-            r: seq[10],
-            r_prime: seq[11],
-            r_prime_prime: seq[12],
-            r_prime_prime_prime: seq[13],
-            o: seq[1],
-            o_prime: seq[3],
-            m: seq[4],
-            m_prime: seq[5],
-            t: seq[6],
-            t_prime: seq[7],
-            m2: seq[8],
-            s: seq[9],
-            c: seq[2]
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct NonRevocProofCList {
-    e: PointG1,
-    d: PointG1,
-    a: PointG1,
-    g: PointG1,
-    w: PointG2,
-    s: PointG2,
-    u: PointG2
-}
-
-impl NonRevocProofCList {
-    pub fn as_list(&self) -> Result<Vec<Vec<u8>>, IndyCryptoError> {
-        Ok(vec![
-            self.e.to_bytes()?,
-            self.d.to_bytes()?,
-            self.a.to_bytes()?,
-            self.g.to_bytes()?,
-            self.w.to_bytes()?,
-            self.s.to_bytes()?,
-            self.u.to_bytes()?,
-        ])
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct NonRevocProofTauList {
-    t1: PointG1,
-    t2: PointG1,
-    t3: Pair,
-    t4: Pair,
-    t5: PointG1,
-    t6: PointG1,
-    t7: Pair,
-    t8: Pair
-}
-
-impl NonRevocProofTauList {
-    pub fn as_slice(&self) -> Result<Vec<Vec<u8>>, IndyCryptoError> {
-        Ok(vec![
-            self.t1.to_bytes()?,
-            self.t2.to_bytes()?,
-            self.t3.to_bytes()?,
-            self.t4.to_bytes()?,
-            self.t5.to_bytes()?,
-            self.t6.to_bytes()?,
-            self.t7.to_bytes()?,
-            self.t8.to_bytes()?,
-        ])
-    }
-}
-
 /// Random BigNumber that uses `Prover` for proof generation and `Verifier` for proof verification.
 pub type Nonce = BigNumber;
 
@@ -1121,9 +672,7 @@ pub struct VerifiableCredential {
     pub_key: CredentialPublicKey,
     sub_proof_request: SubProofRequest,
     credential_schema: CredentialSchema,
-    non_credential_schema: NonCredentialSchema,
-    rev_key_pub: Option<RevocationKeyPublic>,
-    rev_reg: Option<RevocationRegistry>
+    non_credential_schema: NonCredentialSchema
 }
 
 trait BytesView {
@@ -1131,24 +680,6 @@ trait BytesView {
 }
 
 impl BytesView for BigNumber {
-    fn to_bytes(&self) -> Result<Vec<u8>, IndyCryptoError> {
-        Ok(self.to_bytes()?)
-    }
-}
-
-impl BytesView for PointG1 {
-    fn to_bytes(&self) -> Result<Vec<u8>, IndyCryptoError> {
-        Ok(self.to_bytes()?)
-    }
-}
-
-impl BytesView for GroupOrderElement {
-    fn to_bytes(&self) -> Result<Vec<u8>, IndyCryptoError> {
-        Ok(self.to_bytes()?)
-    }
-}
-
-impl BytesView for Pair {
     fn to_bytes(&self) -> Result<Vec<u8>, IndyCryptoError> {
         Ok(self.to_bytes()?)
     }
@@ -1213,7 +744,7 @@ mod test {
         non_credential_schema_builder.add_attr("master_secret").unwrap();
         let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
 
-        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
+        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
 
         let master_secret = Prover::new_master_secret().unwrap();
         let credential_nonce = new_nonce().unwrap();
@@ -1256,10 +787,7 @@ mod test {
                                              &signature_correctness_proof,
                                              &credential_secrets_blinding_factors,
                                              &cred_pub_key,
-                                             &cred_issuance_nonce,
-                                             None,
-                                             None,
-                                             None).unwrap();
+                                             &cred_issuance_nonce).unwrap();
 
         let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
         sub_proof_request_builder.add_revealed_attr("total_liabilities").unwrap();
@@ -1285,9 +813,7 @@ mod test {
                                             &non_credential_schema,
                                             &cred_signature,
                                             &cred_values,
-                                            &cred_pub_key,
-                                            None,
-                                            None).unwrap();
+                                            &cred_pub_key).unwrap();
 
         let proof_request_nonce = new_nonce().unwrap();
         let proof = proof_builder.finalize(&proof_request_nonce).unwrap();
@@ -1296,9 +822,7 @@ mod test {
         proof_verifier.add_sub_proof_request(&sub_proof_request,
                                              &credential_schema,
                                              &non_credential_schema,
-                                             &cred_pub_key,
-                                             None,
-                                             None).unwrap();
+                                             &cred_pub_key).unwrap();
         assert!(proof_verifier.verify(&proof, &proof_request_nonce).unwrap());
     }
 
@@ -1350,8 +874,7 @@ mod test {
                 "sex":"13123681697669364600723785784083768668401173003182555407713667959884184961072036088391942098105496874381346284841774772987179772727928471347011107103459387881602408580853389973314",
                 "height":"5824877563809831190436025794795529331411852203759926644567286594845018041324472260994302109635777382645241758582661313361940262319244084725507113643699421966391425299602530147274"
              },
-             "m1":"8583218861046444624186479147396651631579156942204850397797096661516116684243552483174250620744158944865553535495733571632663325011575249979223204777745326895517953843420687756433",
-             "m2":"5731555078708393357614629066851705238802823277918949054467378429261691189252606979808518037016695141384783224302687321866277811431449642994233365265728281815807346591371594096297"
+             "m1":"8583218861046444624186479147396651631579156942204850397797096661516116684243552483174250620744158944865553535495733571632663325011575249979223204777745326895517953843420687756433"
          }"#;
         let string2 = r#"{
             "revealed_attrs":{ "name":"1139481716457488690172217916278103335" },
@@ -1363,8 +886,7 @@ mod test {
                 "sex":"13123681697669364600723785784083768668401173003182555407713667959884184961072036088391942098105496874381346284841774772987179772727928471347011107103459387881602408580853389973314",
                 "height":"5824877563809831190436025794795529331411852203759926644567286594845018041324472260994302109635777382645241758582661313361940262319244084725507113643699421966391425299602530147274",
                 "master_secret":"8583218861046444624186479147396651631579156942204850397797096661516116684243552483174250620744158944865553535495733571632663325011575249979223204777745326895517953843420687756433"
-             },
-             "m2":"5731555078708393357614629066851705238802823277918949054467378429261691189252606979808518037016695141384783224302687321866277811431449642994233365265728281815807346591371594096297"
+             }
          }"#;
 
         let one = serde_json::from_str::<PrimaryEqualProof>(string1).unwrap();
@@ -1387,7 +909,7 @@ mod test {
         non_credential_schema_builder.add_attr("master_secret").unwrap();
         let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
 
-        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
+        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
 
         let master_secret = Prover::new_master_secret().unwrap();
         let credential_nonce = new_nonce().unwrap();
@@ -1424,10 +946,7 @@ mod test {
                                              &signature_correctness_proof,
                                              &credential_secrets_blinding_factors,
                                              &cred_pub_key,
-                                             &cred_issuance_nonce,
-                                             None,
-                                             None,
-                                             None).unwrap();
+                                             &cred_issuance_nonce).unwrap();
 
         let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
         sub_proof_request_builder.add_revealed_attr("name").unwrap();
@@ -1440,9 +959,7 @@ mod test {
                                             &non_credential_schema,
                                             &cred_signature,
                                             &cred_values,
-                                            &cred_pub_key,
-                                            None,
-                                            None).unwrap();
+                                            &cred_pub_key).unwrap();
 
         let proof_request_nonce = new_nonce().unwrap();
         let proof = proof_builder.finalize(&proof_request_nonce).unwrap();
@@ -1451,109 +968,7 @@ mod test {
         proof_verifier.add_sub_proof_request(&sub_proof_request,
                                              &credential_schema,
                                              &non_credential_schema,
-                                             &cred_pub_key,
-                                             None,
-                                             None).unwrap();
+                                             &cred_pub_key).unwrap();
         assert!(proof_verifier.verify(&proof, &proof_request_nonce).unwrap());
-    }
-
-    #[test]
-    fn demo_revocation() {
-        let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
-        credential_schema_builder.add_attr("name").unwrap();
-        credential_schema_builder.add_attr("sex").unwrap();
-        credential_schema_builder.add_attr("age").unwrap();
-        credential_schema_builder.add_attr("height").unwrap();
-        let credential_schema = credential_schema_builder.finalize().unwrap();
-
-        let mut non_credential_schema_builder = NonCredentialSchemaBuilder::new().unwrap();
-        non_credential_schema_builder.add_attr("master_secret").unwrap();
-        let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
-
-        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, true).unwrap();
-
-        let max_cred_num = 5;
-        let issuance_by_default = false;
-        let (rev_key_pub, rev_key_priv, mut rev_reg, mut rev_tails_generator) =
-            Issuer::new_revocation_registry_def(&cred_pub_key, max_cred_num, issuance_by_default).unwrap();
-
-        let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
-
-        let master_secret = Prover::new_master_secret().unwrap();
-
-        let credential_nonce = new_nonce().unwrap();
-
-        let mut credential_values_builder = Issuer::new_credential_values_builder().unwrap();
-        credential_values_builder.add_value_hidden("master_secret", &master_secret.value().unwrap()).unwrap();
-        credential_values_builder.add_dec_known("name", "1139481716457488690172217916278103335").unwrap();
-        credential_values_builder.add_dec_known("sex", "5944657099558967239210949258394887428692050081607692519917050011144233115103").unwrap();
-        credential_values_builder.add_dec_known("age", "28").unwrap();
-        credential_values_builder.add_dec_known("height", "175").unwrap();
-        let cred_values = credential_values_builder.finalize().unwrap();
-
-        let (blinded_credential_secrets, credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof) =
-            Prover::blind_credential_secrets(&cred_pub_key,
-                                        &cred_key_correctness_proof,
-                                        &cred_values,
-                                        &credential_nonce).unwrap();
-
-
-
-        let credential_issuance_nonce = new_nonce().unwrap();
-
-        let rev_idx = 1;
-        let (mut cred_signature, signature_correctness_proof, rev_reg_delta) =
-            Issuer::sign_credential_with_revoc("CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW",
-                                               &blinded_credential_secrets,
-                                               &blinded_credential_secrets_correctness_proof,
-                                               &credential_nonce,
-                                               &credential_issuance_nonce,
-                                               &cred_values,
-                                               &cred_pub_key,
-                                               &cred_priv_key,
-                                               rev_idx,
-                                               max_cred_num,
-                                               issuance_by_default,
-                                               &mut rev_reg,
-                                               &rev_key_priv,
-                                               &simple_tail_accessor).unwrap();
-
-        let witness = Witness::new(rev_idx, max_cred_num, issuance_by_default, &rev_reg_delta.unwrap(), &simple_tail_accessor).unwrap();
-
-        Prover::process_credential_signature(&mut cred_signature,
-                                             &cred_values,
-                                             &signature_correctness_proof,
-                                             &credential_secrets_blinding_factors,
-                                             &cred_pub_key,
-                                             &credential_issuance_nonce,
-                                             Some(&rev_key_pub),
-                                             Some(&rev_reg),
-                                             Some(&witness)).unwrap();
-
-        let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
-        sub_proof_request_builder.add_revealed_attr("name").unwrap();
-        sub_proof_request_builder.add_predicate("age", "GE", 18).unwrap();
-        let sub_proof_request = sub_proof_request_builder.finalize().unwrap();
-        let mut proof_builder = Prover::new_proof_builder().unwrap();
-        proof_builder.add_common_attribute("master_secret").unwrap();
-        proof_builder.add_sub_proof_request(&sub_proof_request,
-                                            &credential_schema,
-                                            &non_credential_schema,
-                                            &cred_signature,
-                                            &cred_values,
-                                            &cred_pub_key,
-                                            Some(&rev_reg),
-                                            Some(&witness)).unwrap();
-        let proof_request_nonce = new_nonce().unwrap();
-        let proof = proof_builder.finalize(&proof_request_nonce).unwrap();
-
-        let mut proof_verifier = Verifier::new_proof_verifier().unwrap();
-        proof_verifier.add_sub_proof_request(&sub_proof_request,
-                                             &credential_schema,
-                                             &non_credential_schema,
-                                             &cred_pub_key,
-                                             Some(&rev_key_pub),
-                                             Some(&rev_reg)).unwrap();
-        assert_eq!(true, proof_verifier.verify(&proof, &proof_request_nonce).unwrap());
     }
 }

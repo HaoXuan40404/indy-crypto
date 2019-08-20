@@ -2,7 +2,6 @@ use bn::BigNumber;
 use cl::*;
 use cl::constants::*;
 use errors::IndyCryptoError;
-use pair::*;
 use super::helpers::*;
 use cl::commitment::get_pedersen_commitment;
 use cl::hash::get_hash_as_int;
@@ -49,7 +48,7 @@ impl Prover {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema_elements = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (credential_pub_key, _credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema_elements, false).unwrap();
+    /// let (credential_pub_key, _credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema_elements).unwrap();
     ///
     /// let master_secret = Prover::new_master_secret().unwrap();
     /// let credential_nonce = new_nonce().unwrap();
@@ -84,11 +83,6 @@ impl Prover {
         let blinded_primary_credential_secrets =
             Prover::_generate_blinded_primary_credential_secrets_factors(&credential_pub_key.p_key, &credential_values)?;
 
-        let blinded_revocation_credential_secrets = match credential_pub_key.r_key {
-            Some(ref r_pk) => Some(Prover::_generate_blinded_revocation_credential_secrets(r_pk)?),
-            _ => None
-        };
-
         let blinded_credential_secrets_correctness_proof =
             Prover::_new_blinded_credential_secrets_correctness_proof(&credential_pub_key.p_key,
                                                                       &blinded_primary_credential_secrets,
@@ -97,14 +91,12 @@ impl Prover {
 
         let blinded_credential_secrets = BlindedCredentialSecrets {
             u: blinded_primary_credential_secrets.u,
-            ur: blinded_revocation_credential_secrets.as_ref().map(|d| d.ur),
             hidden_attributes: blinded_primary_credential_secrets.hidden_attributes,
             committed_attributes: blinded_primary_credential_secrets.committed_attributes,
         };
 
         let credential_secrets_blinding_factors = CredentialSecretsBlindingFactors {
-            v_prime: blinded_primary_credential_secrets.v_prime,
-            vr_prime: blinded_revocation_credential_secrets.map(|d| d.vr_prime)
+            v_prime: blinded_primary_credential_secrets.v_prime
         };
 
         trace!("Prover::blind_credential_secrets: <<< blinded_credential_secrets: {:?}, \
@@ -131,9 +123,6 @@ impl Prover {
     /// * `credential_secrets_blinding_factors` - Master secret blinding data.
     /// * `credential_pub_key` - Credential public key.
     /// * `nonce` -  Nonce was used by Issuer for the creation of signature_correctness_proof.
-    /// * `rev_key_pub` - (Optional) Revocation registry public key.
-    /// * `rev_reg` - (Optional) Revocation registry.
-    /// * `witness` - (Optional) Witness.
     ///
     /// # Example
     /// ```
@@ -149,7 +138,7 @@ impl Prover {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, false).unwrap();
+    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     ///
     /// let master_secret = Prover::new_master_secret().unwrap();
     /// let credential_nonce = new_nonce().unwrap();
@@ -179,36 +168,26 @@ impl Prover {
     ///                                      &signature_correctness_proof,
     ///                                      &credential_secrets_blinding_factors,
     ///                                      &credential_pub_key,
-    ///                                      &credential_issuance_nonce,
-    ///                                      None, None, None).unwrap();
+    ///                                      &credential_issuance_nonce).unwrap();
     /// ```
     pub fn process_credential_signature(credential_signature: &mut CredentialSignature,
                                         credential_values: &CredentialValues,
                                         signature_correctness_proof: &SignatureCorrectnessProof,
                                         credential_secrets_blinding_factors: &CredentialSecretsBlindingFactors,
                                         credential_pub_key: &CredentialPublicKey,
-                                        nonce: &Nonce,
-                                        rev_key_pub: Option<&RevocationKeyPublic>,
-                                        rev_reg: Option<&RevocationRegistry>,
-                                        witness: Option<&Witness>) -> Result<(), IndyCryptoError> {
+                                        nonce: &Nonce) -> Result<(), IndyCryptoError> {
         trace!("Prover::process_credential_signature: >>> credential_signature: {:?}, \
                                                           credential_values: {:?}, \
                                                           signature_correctness_proof: {:?}, \
                                                           credential_secrets_blinding_factors: {:?}, \
                                                           credential_pub_key: {:?}, \
-                                                          nonce: {:?}, \
-                                                          rev_key_pub: {:?}, \
-                                                          rev_reg: {:?}, \
-                                                          witness: {:?}",
+                                                          nonce: {:?}",
                credential_signature,
                credential_values,
                signature_correctness_proof,
                credential_secrets_blinding_factors,
                credential_pub_key,
-               nonce,
-               rev_key_pub,
-               rev_reg,
-               witness
+               nonce
         );
 
         Prover::_process_primary_credential(&mut credential_signature.p_credential, &credential_secrets_blinding_factors.v_prime)?;
@@ -218,21 +197,6 @@ impl Prover {
                                                    signature_correctness_proof,
                                                    &credential_pub_key.p_key,
                                                    nonce)?;
-
-        if let (&mut Some(ref mut non_revocation_cred), Some(ref vr_prime), &Some(ref r_key),
-            Some(ref r_key_pub), Some(ref r_reg), Some(ref witness)) = (&mut credential_signature.r_credential,
-                                                                        credential_secrets_blinding_factors.vr_prime,
-                                                                        &credential_pub_key.r_key,
-                                                                        rev_key_pub,
-                                                                        rev_reg,
-                                                                        witness) {
-            Prover::_process_non_revocation_credential(non_revocation_cred,
-                                                       vr_prime,
-                                                       &r_key,
-                                                       r_key_pub,
-                                                       r_reg,
-                                                       witness)?;
-        }
 
         trace!("Prover::process_credential_signature: <<<");
 
@@ -275,7 +239,6 @@ impl Prover {
                pr_pub_key,
                key_correctness_proof
         );
-        // TODO:
         let correctness_names: HashSet<&String> = HashSet::from_iter(key_correctness_proof.xr_cap.iter().map(|&(ref key, ref _v)| key));
         for r_key in pr_pub_key.r.keys() {
             if !correctness_names.contains(r_key) {
@@ -420,19 +383,6 @@ impl Prover {
         trace!("Prover::_generate_blinded_primary_credential_secrets_factors: <<< primary_blinded_cred_secrets: {:?}", primary_blinded_cred_secrets);
 
         Ok(primary_blinded_cred_secrets)
-    }
-
-    fn _generate_blinded_revocation_credential_secrets(r_pub_key: &CredentialRevocationPublicKey) -> Result<RevocationBlindedCredentialSecretsFactors, IndyCryptoError> {
-        trace!("Prover::_generate_blinded_revocation_credential_secrets: >>> r_pub_key: {:?}", r_pub_key);
-
-        let vr_prime = GroupOrderElement::new()?;
-        let ur = r_pub_key.h2.mul(&vr_prime)?;
-
-        let revocation_blinded_credential_secrets = RevocationBlindedCredentialSecretsFactors { ur, vr_prime };
-
-        trace!("Prover::_generate_blinded_revocation_credential_secrets: <<< revocation_blinded_credential_secrets: {:?}", revocation_blinded_credential_secrets);
-
-        Ok(revocation_blinded_credential_secrets)
     }
 
     /// 生成盲化后凭证的正确性证明
@@ -595,24 +545,6 @@ impl Prover {
         Ok(())
     }
 
-    fn _process_non_revocation_credential(r_cred: &mut NonRevocationCredentialSignature,
-                                          vr_prime: &GroupOrderElement,
-                                          cred_rev_pub_key: &CredentialRevocationPublicKey,
-                                          rev_key_pub: &RevocationKeyPublic,
-                                          rev_reg: &RevocationRegistry,
-                                          witness: &Witness) -> Result<(), IndyCryptoError> {
-        trace!("Prover::_process_non_revocation_credential: >>> r_cred: {:?}, vr_prime: {:?}, cred_rev_pub_key: {:?}, rev_reg: {:?}, rev_key_pub: {:?}",
-               r_cred, vr_prime, cred_rev_pub_key, rev_reg, rev_key_pub);
-
-        let r_cnxt_m2 = BigNumber::from_bytes(&r_cred.m2.to_bytes()?)?;
-        r_cred.vr_prime_prime = vr_prime.add_mod(&r_cred.vr_prime_prime)?;
-        Prover::_test_witness_signature(&r_cred, cred_rev_pub_key, rev_key_pub, rev_reg, witness, &r_cnxt_m2)?;
-
-        trace!("Prover::_process_non_revocation_credential: <<<");
-
-        Ok(())
-    }
-
     /// 验证签名的正确性
     /// 
     /// 输入：
@@ -658,6 +590,7 @@ impl Prover {
             return Err(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in public key", attr)));
         }
 
+        //FIXME: m2
         // 公式2.21下半部分
         let rx = cred_values
             .attrs_values
@@ -666,14 +599,7 @@ impl Prover {
                 (value.is_known() || value.is_hidden()) && p_pub_key.r.contains_key(attr.clone())
             })
             .fold(
-                get_pedersen_commitment(
-                    &p_pub_key.s,
-                    &p_cred_sig.v,
-                    &p_pub_key.rctxt,
-                    &p_cred_sig.m_2,
-                    &p_pub_key.n,
-                    &mut ctx,
-                ),
+                p_pub_key.s.mod_exp(&p_cred_sig.v, &p_pub_key.n, Some(&mut ctx)),
                 |acc, (attr, value)| {
                     acc?.mod_mul(
                         &p_pub_key.r[&attr.clone()].mod_exp(
@@ -722,48 +648,6 @@ impl Prover {
 
         Ok(())
     }
-
-    fn _test_witness_signature(r_cred: &NonRevocationCredentialSignature,
-                               cred_rev_pub_key: &CredentialRevocationPublicKey,
-                               rev_key_pub: &RevocationKeyPublic,
-                               rev_reg: &RevocationRegistry,
-                               witness: &Witness,
-                               r_cnxt_m2: &BigNumber) -> Result<(), IndyCryptoError> {
-        trace!("Prover::_test_witness_signature: >>> r_cred: {:?}, cred_rev_pub_key: {:?}, rev_key_pub: {:?}, rev_reg: {:?}, r_cnxt_m2: {:?}",
-               r_cred, cred_rev_pub_key, rev_key_pub, rev_reg, r_cnxt_m2);
-
-        let z_calc = Pair::pair(&r_cred.witness_signature.g_i, &rev_reg.accum)?
-            .mul(&Pair::pair(&cred_rev_pub_key.g, &witness.omega)?.inverse()?)?;
-
-        if z_calc != rev_key_pub.z {
-            return Err(IndyCryptoError::InvalidStructure("Issuer is sending incorrect data".to_string()));
-        }
-        let pair_gg_calc = Pair::pair(&cred_rev_pub_key.pk.add(&r_cred.g_i)?, &r_cred.witness_signature.sigma_i)?;
-        let pair_gg = Pair::pair(&cred_rev_pub_key.g, &cred_rev_pub_key.g_dash)?;
-
-        if pair_gg_calc != pair_gg {
-            return Err(IndyCryptoError::InvalidStructure("Issuer is sending incorrect data".to_string()));
-        }
-
-        let m2 = GroupOrderElement::from_bytes(&r_cnxt_m2.to_bytes()?)?;
-
-        let pair_h1 = Pair::pair(&r_cred.sigma, &cred_rev_pub_key.y.add(&cred_rev_pub_key.h_cap.mul(&r_cred.c)?)?)?;
-        let pair_h2 = Pair::pair(
-            &cred_rev_pub_key.h0
-                .add(&cred_rev_pub_key.h1.mul(&m2)?)?
-                .add(&cred_rev_pub_key.h2.mul(&r_cred.vr_prime_prime)?)?
-                .add(&r_cred.g_i)?,
-            &cred_rev_pub_key.h_cap
-        )?;
-
-        if pair_h1 != pair_h2 {
-            return Err(IndyCryptoError::InvalidStructure("Issuer is sending incorrect data".to_string()));
-        }
-
-        trace!("Prover::_test_witness_signature: <<<");
-
-        Ok(())
-    }
 }
 
 #[derive(Debug)]
@@ -791,7 +675,6 @@ impl ProofBuilder {
     /// * `credential_signature` - Credential signature.
     /// * `credential_values` - Credential values.
     /// * `credential_pub_key` - Credential public key.
-    /// * `rev_reg_pub` - (Optional) Revocation registry public.
     ///
     /// #Example
     /// ```
@@ -808,7 +691,7 @@ impl ProofBuilder {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, false).unwrap();
+    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     ///
     /// let master_secret = Prover::new_master_secret().unwrap();
     /// let credential_nonce = new_nonce().unwrap();
@@ -838,8 +721,7 @@ impl ProofBuilder {
     ///                                      &signature_correctness_proof,
     ///                                      &credential_secrets_blinding_factors,
     ///                                      &credential_pub_key,
-    ///                                      &credential_issuance_nonce,
-    ///                                      None, None, None).unwrap();
+    ///                                      &credential_issuance_nonce).unwrap();
     ///
     /// let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
     /// sub_proof_request_builder.add_revealed_attr("sex").unwrap();
@@ -852,9 +734,7 @@ impl ProofBuilder {
     ///                                     &non_credential_schema,
     ///                                     &credential_signature,
     ///                                     &credential_values,
-    ///                                     &credential_pub_key,
-    ///                                     None,
-    ///                                     None).unwrap();
+    ///                                     &credential_pub_key).unwrap();
     /// ```
     pub fn add_sub_proof_request(&mut self,
                                  sub_proof_request: &SubProofRequest,
@@ -862,25 +742,19 @@ impl ProofBuilder {
                                  non_credential_schema: &NonCredentialSchema,
                                  credential_signature: &CredentialSignature,
                                  credential_values: &CredentialValues,
-                                 credential_pub_key: &CredentialPublicKey,
-                                 rev_reg: Option<&RevocationRegistry>,
-                                 witness: Option<&Witness>) -> Result<(), IndyCryptoError> {
+                                 credential_pub_key: &CredentialPublicKey) -> Result<(), IndyCryptoError> {
         trace!("ProofBuilder::add_sub_proof_request: >>> sub_proof_request: {:?}, \
                                                          credential_schema: {:?}, \
                                                          non_credential_schema: {:?}, \
                                                          credential_signature: {:?}, \
                                                          credential_values: {:?}, \
-                                                         credential_pub_key: {:?}, \
-                                                         rev_reg: {:?}, \
-                                                         witness: {:?}",
+                                                         credential_pub_key: {:?}",
                sub_proof_request,
                credential_schema,
                non_credential_schema,
                credential_signature,
                credential_values,
-               credential_pub_key,
-               rev_reg,
-               witness);
+               credential_pub_key);
         ProofBuilder::_check_add_sub_proof_request_params_consistency(
             credential_values,
             sub_proof_request,
@@ -888,39 +762,19 @@ impl ProofBuilder {
             non_credential_schema,
         )?;
 
-        let mut non_revoc_init_proof = None;
-        let mut m2_tilde: Option<BigNumber> = None;
-
-        if let (&Some(ref r_cred), &Some(ref r_reg), &Some(ref r_pub_key), &Some(ref witness)) = (&credential_signature.r_credential,
-                                                                                                  &rev_reg,
-                                                                                                  &credential_pub_key.r_key,
-                                                                                                  &witness) {
-            let proof = ProofBuilder::_init_non_revocation_proof(&r_cred,
-                                                                 &r_reg,
-                                                                 &r_pub_key,
-                                                                 &witness)?;
-
-            self.c_list.extend_from_slice(&proof.as_c_list()?);
-            self.tau_list.extend_from_slice(&proof.as_tau_list()?);
-            m2_tilde = Some(group_element_to_bignum(&proof.tau_list_params.m2)?);
-            non_revoc_init_proof = Some(proof);
-        }
-
         let primary_init_proof = ProofBuilder::_init_primary_proof(&self.common_attributes,
                                                                    &credential_pub_key.p_key,
                                                                    &credential_signature.p_credential,
                                                                    credential_values,
                                                                    credential_schema,
                                                                    non_credential_schema,
-                                                                   sub_proof_request,
-                                                                   m2_tilde)?;
+                                                                   sub_proof_request)?;
 
         self.c_list.extend_from_slice(&primary_init_proof.as_c_list()?);
         self.tau_list.extend_from_slice(&primary_init_proof.as_tau_list()?);
 
         let init_proof = InitProof {
             primary_init_proof,
-            non_revoc_init_proof,
             credential_values: credential_values.clone()?,
             sub_proof_request: sub_proof_request.clone(),
             credential_schema: credential_schema.clone(),
@@ -954,7 +808,7 @@ impl ProofBuilder {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, false).unwrap();
+    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     ///
     /// let master_secret = Prover::new_master_secret().unwrap();
     ///
@@ -986,8 +840,7 @@ impl ProofBuilder {
     ///                                      &signature_correctness_proof,
     ///                                      &credential_secrets_blinding_factors,
     ///                                      &credential_pub_key,
-    ///                                      &credential_issuance_nonce,
-    ///                                      None, None, None).unwrap();
+    ///                                      &credential_issuance_nonce).unwrap();
     ///
     /// let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
     /// sub_proof_request_builder.add_revealed_attr("sex").unwrap();
@@ -1000,9 +853,7 @@ impl ProofBuilder {
     ///                                     &non_credential_schema,
     ///                                     &credential_signature,
     ///                                     &credential_values,
-    ///                                     &credential_pub_key,
-    ///                                     None,
-    ///                                     None).unwrap();
+    ///                                     &credential_pub_key).unwrap();
     ///
     /// let proof_request_nonce = new_nonce().unwrap();
     /// let _proof = proof_builder.finalize(&proof_request_nonce).unwrap();
@@ -1021,11 +872,6 @@ impl ProofBuilder {
         let mut proofs: Vec<SubProof> = Vec::new();
 
         for init_proof in self.init_proofs.iter() {
-            let mut non_revoc_proof: Option<NonRevocProof> = None;
-            if let Some(ref non_revoc_init_proof) = init_proof.non_revoc_init_proof {
-                non_revoc_proof = Some(ProofBuilder::_finalize_non_revocation_proof(&non_revoc_init_proof, &challenge)?);
-            }
-
             let primary_proof = ProofBuilder::_finalize_primary_proof(
                 &init_proof.primary_init_proof,
                 &challenge,
@@ -1035,7 +881,7 @@ impl ProofBuilder {
                 &init_proof.sub_proof_request,
             )?;
 
-            let proof = SubProof { primary_proof, non_revoc_proof };
+            let proof = SubProof { primary_proof };
             proofs.push(proof);
         }
 
@@ -1106,17 +952,15 @@ impl ProofBuilder {
                            cred_values: &CredentialValues,
                            cred_schema: &CredentialSchema,
                            non_cred_schema_elems: &NonCredentialSchema,
-                           sub_proof_request: &SubProofRequest,
-                           m2_t: Option<BigNumber>) -> Result<PrimaryInitProof, IndyCryptoError> {
+                           sub_proof_request: &SubProofRequest) -> Result<PrimaryInitProof, IndyCryptoError> {
         trace!("ProofBuilder::_init_primary_proof: >>> common_attributes: {:?}, \
                                                        issuer_pub_key: {:?}, \
                                                        c1: {:?}, \
                                                        cred_values: {:?}, \
                                                        cred_schema: {:?}, \
                                                        non_cred_schema_elems: {:?}, \
-                                                       sub_proof_request: {:?}, \
-                                                       m2_t: {:?}",
-               common_attributes, issuer_pub_key, c1, cred_values, cred_schema, non_cred_schema_elems, sub_proof_request, m2_t);
+                                                       sub_proof_request: {:?}",
+               common_attributes, issuer_pub_key, c1, cred_values, cred_schema, non_cred_schema_elems, sub_proof_request);
 
 
         let eq_proof = ProofBuilder::_init_eq_proof(common_attributes,
@@ -1124,8 +968,7 @@ impl ProofBuilder {
                                                     c1,
                                                     cred_schema,
                                                     non_cred_schema_elems,
-                                                    sub_proof_request,
-                                                    m2_t,
+                                                    sub_proof_request
         )?;
 
         let mut ne_proofs: Vec<PrimaryPredicateInequalityInitProof> = Vec::new();
@@ -1144,34 +987,6 @@ impl ProofBuilder {
         trace!("ProofBuilder::_init_primary_proof: <<< primary_init_proof: {:?}", primary_init_proof);
 
         Ok(primary_init_proof)
-    }
-
-    fn _init_non_revocation_proof(r_cred: &NonRevocationCredentialSignature,
-                                  rev_reg: &RevocationRegistry,
-                                  cred_rev_pub_key: &CredentialRevocationPublicKey,
-                                  witness: &Witness) -> Result<NonRevocInitProof, IndyCryptoError> {
-        trace!("ProofBuilder::_init_non_revocation_proof: >>> r_cred: {:?}, rev_reg: {:?}, cred_rev_pub_key: {:?}, witness: {:?}",
-               r_cred, rev_reg, cred_rev_pub_key, witness);
-
-        let c_list_params = ProofBuilder::_gen_c_list_params(&r_cred)?;
-        let c_list = ProofBuilder::_create_c_list_values(&r_cred, &c_list_params, &cred_rev_pub_key, witness)?;
-
-        let tau_list_params = ProofBuilder::_gen_tau_list_params()?;
-        let tau_list = create_tau_list_values(&cred_rev_pub_key,
-                                              &rev_reg,
-                                              &tau_list_params,
-                                              &c_list)?;
-
-        let r_init_proof = NonRevocInitProof {
-            c_list_params,
-            tau_list_params,
-            c_list,
-            tau_list
-        };
-
-        trace!("ProofBuilder::_init_non_revocation_proof: <<< r_init_proof: {:?}", r_init_proof);
-
-        Ok(r_init_proof)
     }
 
     /// 初始化equal部分的证明
@@ -1194,19 +1009,15 @@ impl ProofBuilder {
                       c1: &PrimaryCredentialSignature,
                       cred_schema: &CredentialSchema,
                       non_cred_schema_elems: &NonCredentialSchema,
-                      sub_proof_request: &SubProofRequest,
-                      m2_t: Option<BigNumber>) -> Result<PrimaryEqualInitProof, IndyCryptoError> {
+                      sub_proof_request: &SubProofRequest) -> Result<PrimaryEqualInitProof, IndyCryptoError> {
         trace!("ProofBuilder::_init_eq_proof: >>> cred_pub_key: {:?}, \
                                                   c1: {:?}, \
                                                   cred_schema: {:?}, \
                                                   non_cred_schema_elems: {:?}, \
-                                                  sub_proof_request: {:?}, \
-                                                  m2_t: {:?}",
-               cred_pub_key, c1, cred_schema, non_cred_schema_elems, sub_proof_request, m2_t);
+                                                  sub_proof_request: {:?}",
+               cred_pub_key, c1, cred_schema, non_cred_schema_elems, sub_proof_request);
 
         let mut ctx = BigNumber::new_context()?;
-
-        let m2_tilde = m2_t.unwrap_or(bn_rand(LARGE_MVECT)?);
 
         let r = bn_rand(LARGE_VPRIME)?;
         let e_tilde = bn_rand(LARGE_ETILDE)?;
@@ -1232,7 +1043,7 @@ impl ProofBuilder {
         let v_prime = c1.v.sub(&c1.e.mul(&r, Some(&mut ctx))?)?;
 
         // 公式4.19
-        let t = calc_teq(&cred_pub_key, &a_prime, &e_tilde, &v_tilde, &m_tilde, &m2_tilde, &unrevealed_attrs)?;
+        let t = calc_teq(&cred_pub_key, &a_prime, &e_tilde, &v_tilde, &m_tilde, &unrevealed_attrs)?;
 
         let primary_equal_init_proof = PrimaryEqualInitProof {
             a_prime,
@@ -1241,9 +1052,7 @@ impl ProofBuilder {
             e_prime,
             v_tilde,
             v_prime,
-            m_tilde,
-            m2_tilde: m2_tilde.clone()?,
-            m2: c1.m_2.clone()?
+            m_tilde
         };
 
         trace!("ProofBuilder::_init_eq_proof: <<< primary_equal_init_proof: {:?}", primary_equal_init_proof);
@@ -1417,10 +1226,6 @@ impl ProofBuilder {
             m.insert(k.clone(), val);
         }
 
-        let m2 = challenge
-            .mul(&init_proof.m2, Some(&mut ctx))?
-            .add(&init_proof.m2_tilde)?;
-
         let mut revealed_attrs_with_values = BTreeMap::new();
 
         for attr in sub_proof_request.revealed_attrs.iter() {
@@ -1439,8 +1244,7 @@ impl ProofBuilder {
             a_prime: init_proof.a_prime.clone()?,
             e,
             v,
-            m,
-            m2
+            m
         };
 
         trace!("ProofBuilder::_finalize_eq_proof: <<< primary_equal_proof: {:?}", primary_equal_proof);
@@ -1559,149 +1363,6 @@ impl ProofBuilder {
 
         Ok(primary_proof)
     }
-
-    fn _gen_c_list_params(r_cred: &NonRevocationCredentialSignature) -> Result<NonRevocProofXList, IndyCryptoError> {
-        trace!("ProofBuilder::_gen_c_list_params: >>> r_cred: {:?}", r_cred);
-
-        let rho = GroupOrderElement::new()?;
-        let r = GroupOrderElement::new()?;
-        let r_prime = GroupOrderElement::new()?;
-        let r_prime_prime = GroupOrderElement::new()?;
-        let r_prime_prime_prime = GroupOrderElement::new()?;
-        let o = GroupOrderElement::new()?;
-        let o_prime = GroupOrderElement::new()?;
-        let m = rho.mul_mod(&r_cred.c)?;
-        let m_prime = r.mul_mod(&r_prime_prime)?;
-        let t = o.mul_mod(&r_cred.c)?;
-        let t_prime = o_prime.mul_mod(&r_prime_prime)?;
-        let m2 = GroupOrderElement::from_bytes(&r_cred.m2.to_bytes()?)?;
-
-        let non_revoc_proof_x_list = NonRevocProofXList {
-            rho,
-            r,
-            r_prime,
-            r_prime_prime,
-            r_prime_prime_prime,
-            o,
-            o_prime,
-            m,
-            m_prime,
-            t,
-            t_prime,
-            m2,
-            s: r_cred.vr_prime_prime,
-            c: r_cred.c
-        };
-
-        trace!("ProofBuilder::_gen_c_list_params: <<< non_revoc_proof_x_list: {:?}", non_revoc_proof_x_list);
-
-        Ok(non_revoc_proof_x_list)
-    }
-
-    fn _create_c_list_values(r_cred: &NonRevocationCredentialSignature,
-                             params: &NonRevocProofXList,
-                             r_pub_key: &CredentialRevocationPublicKey,
-                             witness: &Witness) -> Result<NonRevocProofCList, IndyCryptoError> {
-        trace!("ProofBuilder::_create_c_list_values: >>> r_cred: {:?}, r_pub_key: {:?}", r_cred, r_pub_key);
-
-        let e = r_pub_key.h
-            .mul(&params.rho)?
-            .add(
-                &r_pub_key.htilde.mul(&params.o)?
-            )?;
-
-        let d = r_pub_key.g
-            .mul(&params.r)?
-            .add(
-                &r_pub_key.htilde.mul(&params.o_prime)?
-            )?;
-
-        let a = r_cred.sigma
-            .add(
-                &r_pub_key.htilde.mul(&params.rho)?
-            )?;
-
-        let g = r_cred.g_i
-            .add(
-                &r_pub_key.htilde.mul(&params.r)?
-            )?;
-
-        let w = witness.omega
-            .add(
-                &r_pub_key.h_cap.mul(&params.r_prime)?
-            )?;
-
-        let s = r_cred.witness_signature.sigma_i
-            .add(
-                &r_pub_key.h_cap.mul(&params.r_prime_prime)?
-            )?;
-
-        let u = r_cred.witness_signature.u_i
-            .add(
-                &r_pub_key.h_cap.mul(&params.r_prime_prime_prime)?
-            )?;
-
-        let non_revoc_proof_c_list = NonRevocProofCList {
-            e,
-            d,
-            a,
-            g,
-            w,
-            s,
-            u
-        };
-
-        trace!("ProofBuilder::_create_c_list_values: <<< non_revoc_proof_c_list: {:?}", non_revoc_proof_c_list);
-
-        Ok(non_revoc_proof_c_list)
-    }
-
-    fn _gen_tau_list_params() -> Result<NonRevocProofXList, IndyCryptoError> {
-        trace!("ProofBuilder::_gen_tau_list_params: >>>");
-
-        let non_revoc_proof_x_list = NonRevocProofXList {
-            rho: GroupOrderElement::new()?,
-            r: GroupOrderElement::new()?,
-            r_prime: GroupOrderElement::new()?,
-            r_prime_prime: GroupOrderElement::new()?,
-            r_prime_prime_prime: GroupOrderElement::new()?,
-            o: GroupOrderElement::new()?,
-            o_prime: GroupOrderElement::new()?,
-            m: GroupOrderElement::new()?,
-            m_prime: GroupOrderElement::new()?,
-            t: GroupOrderElement::new()?,
-            t_prime: GroupOrderElement::new()?,
-            m2: GroupOrderElement::new()?,
-            s: GroupOrderElement::new()?,
-            c: GroupOrderElement::new()?
-        };
-
-        trace!("ProofBuilder::_gen_tau_list_params: <<< Nnon_revoc_proof_x_list: {:?}", non_revoc_proof_x_list);
-
-        Ok(non_revoc_proof_x_list)
-    }
-
-    fn _finalize_non_revocation_proof(init_proof: &NonRevocInitProof, c_h: &BigNumber) -> Result<NonRevocProof, IndyCryptoError> {
-        trace!("ProofBuilder::_finalize_non_revocation_proof: >>> init_proof: {:?}, c_h: {:?}", init_proof, c_h);
-
-        let ch_num_z = bignum_to_group_element(&c_h)?;
-        let mut x_list: Vec<GroupOrderElement> = Vec::new();
-
-        for (x, y) in init_proof.tau_list_params.as_list()?.iter().zip(init_proof.c_list_params.as_list()?.iter()) {
-            x_list.push(x.add_mod(
-                &ch_num_z.mul_mod(&y)?.mod_neg()?
-            )?);
-        }
-
-        let non_revoc_proof = NonRevocProof {
-            x_list: NonRevocProofXList::from_list(x_list),
-            c_list: init_proof.c_list.clone()
-        };
-
-        trace!("ProofBuilder::_finalize_non_revocation_proof: <<< non_revoc_proof: {:?}", non_revoc_proof);
-
-        Ok(non_revoc_proof)
-    }
 }
 
 #[cfg(test)]
@@ -1778,9 +1439,6 @@ mod tests {
     #[test]
     fn generate_blinded_revocation_credential_secrets_works() {
         MockHelper::inject();
-
-        let r_pk = issuer::mocks::credential_revocation_public_key();
-        Prover::_generate_blinded_revocation_credential_secrets(&r_pk).unwrap();
     }
 
     #[test]
@@ -1797,8 +1455,6 @@ mod tests {
 
         assert_eq!(blinded_credential_secrets.u, BigNumber::from_dec("90379212883377051942444457214004439563879517047934957924109506327827266424864106127396714346970738216284320507530527754324729206801422601992700522417322083581628939167117187181423638437856384315973558857250692265909530560844452355964326255821057551846167569170509524949792604814958417070636632379251447321861706466435758587453671398786938921675857732974923901803378547250372362630279485056161267415391507414010183531088200803261695568846058335634754886427522606528221525388671780017596236038760448329929785833010252968356814800693372830944570065390232033948827218950397755480445898892886723022422888608162061797883541").unwrap());
         assert_eq!(credential_secrets_blinding_factors.v_prime, BigNumber::from_dec("35131625843806290832574870589259287147303302356085937450138681169270844305658441640899780357851554390281352797472151859633451190372182905767740276000477099644043795107449461869975792759973231599572009337886283219344284767785705740629929916685684025616389621432096690068102576167647117576924865030253290356476886389376786906469624913865400296221181743871195998667521041628188272244376790322856843509187067488962831880868979749045372839549034465343690176440012266969614156191820420452812733264350018673445974099278245215963827842041818557926829011513408602244298030173493359464182527821314118075880620818817455331127028576670474022443879858290").unwrap());
-        assert!(blinded_credential_secrets.ur.is_some());
-        assert!(credential_secrets_blinding_factors.vr_prime.is_some());
 
         let expected_blinded_credential_secrets_correctness_proof = BlindedCredentialSecretsCorrectnessProof {
             c: BigNumber::from_dec("62987495574713125276927020393421215004000405197826691815490873602430880071520").unwrap(),
@@ -1812,6 +1468,7 @@ mod tests {
         assert_eq!(blinded_credential_secrets_correctness_proof, expected_blinded_credential_secrets_correctness_proof);
     }
 
+    //TODO: conflicts
     #[test]
     fn process_primary_credential_works() {
         MockHelper::inject();
@@ -1841,10 +1498,7 @@ mod tests {
                                              &signature_correctness_proof,
                                              &credential_secrets_blinding_factors,
                                              &pk,
-                                             &nonce,
-                                             None,
-                                             None,
-                                             None).unwrap();
+                                             &nonce).unwrap();
 
         assert_eq!(mocks::primary_credential(), credential_signature.p_credential);
     }
@@ -1859,15 +1513,13 @@ mod tests {
         let non_cred_schema_elems = issuer::mocks::non_credential_schema();
         let credential = mocks::primary_credential();
         let sub_proof_request = mocks::sub_proof_request();
-        let m2_tilde = group_element_to_bignum(&mocks::init_non_revocation_proof().tau_list_params.m2).unwrap();
 
         let init_eq_proof = ProofBuilder::_init_eq_proof(&common_attributes,
                                                          &pk,
                                                          &credential,
                                                          &cred_schema,
                                                          &non_cred_schema_elems,
-                                                         &sub_proof_request,
-                                                         Some(m2_tilde)).unwrap();
+                                                         &sub_proof_request).unwrap();
 
         assert_eq!(mocks::primary_equal_init_proof(), init_eq_proof);
     }
@@ -1889,6 +1541,7 @@ mod tests {
         assert_eq!(mocks::primary_ne_init_proof(), init_ne_proof);
     }
 
+
     #[test]
     fn init_primary_proof_works() {
         MockHelper::inject();
@@ -1900,7 +1553,6 @@ mod tests {
         let credential_values = issuer::mocks::credential_values();
         let sub_proof_request = mocks::sub_proof_request();
         let common_attributes = mocks::proof_common_attributes();
-        let m2_tilde = group_element_to_bignum(&mocks::init_non_revocation_proof().tau_list_params.m2).unwrap();
 
         let init_proof = ProofBuilder::_init_primary_proof(&common_attributes,
                                                            &pk,
@@ -1908,8 +1560,7 @@ mod tests {
                                                            &credential_values,
                                                            &credential_schema,
                                                            &non_credential_schema,
-                                                           &sub_proof_request,
-                                                           Some(m2_tilde)).unwrap();
+                                                           &sub_proof_request).unwrap();
         assert_eq!(mocks::primary_init_proof(), init_proof);
     }
 
@@ -1971,125 +1622,6 @@ mod tests {
 
     extern crate time;
 
-    /*
-    Results:
-
-    N = 100
-    Create RevocationRegistry Time: Duration { secs: 0, nanos: 153759082 }
-    Update NonRevocation Credential Time: Duration { secs: 0, nanos: 490382 }
-    Total Time for 100 credentials: Duration { secs: 5, nanos: 45915383 }
-
-    N = 1000
-    Create RevocationRegistry Time: Duration { secs: 1, nanos: 636113212 }
-    Update NonRevocation Credential Time: Duration { secs: 0, nanos: 5386575 }
-    Total Time for 1000 credentials: Duration { secs: 6, nanos: 685771457 }
-
-    N = 10000
-    Create RevocationRegistry Time: Duration { secs: 16, nanos: 844061103 }
-    Update NonRevocation Credential Time: Duration { secs: 0, nanos: 52396763 }
-    Total Time for 10000 credentials: Duration { secs: 29, nanos: 628240611 }
-
-    N = 100000
-    Create RevocationRegistry Time: Duration { secs: 175, nanos: 666428558 }
-    Update NonRevocation Credential Time: Duration { secs: 0, nanos: 667879620 }
-    Total Time for 100000 credentials: Duration { secs: 185, nanos: 810126906 }
-
-    N = 1000000
-    Create RevocationRegistry Time: Duration { secs: 1776, nanos: 485208599 }
-    Update NonRevocation Credential Time: Duration { secs: 6, nanos: 35027554 }
-    Total Time for 1000000 credentials: Duration { secs: 1798, nanos: 420564334 }
-    */
-    #[test]
-    fn test_update_proof() {
-        println!("Update Proof test -> start");
-        let n = 100;
-
-        let total_start_time = time::get_time();
-
-        let cred_schema = issuer::mocks::credential_schema();
-        let non_cred_schema = issuer::mocks::non_credential_schema();
-        let (cred_pub_key, cred_priv_key, cred_key_correctness_proof) = issuer::Issuer::new_credential_def(&cred_schema, &non_cred_schema, true).unwrap();
-
-        let start_time = time::get_time();
-
-        let (rev_key_pub, rev_key_priv, mut rev_reg, mut rev_tails_generator) = issuer::Issuer::new_revocation_registry_def(&cred_pub_key, n, false).unwrap();
-
-        let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
-
-        let end_time = time::get_time();
-
-        println!("Create RevocationRegistry Time: {:?}", end_time - start_time);
-
-        let cred_values = issuer::mocks::credential_values();
-
-        // Issue first correct Claim
-        let credential_nonce = new_nonce().unwrap();
-
-        let (blinded_credential_secrets, credential_secrets_blinding_factors, blinded_credential_secrets_correctness_proof) =
-            Prover::blind_credential_secrets(&cred_pub_key,
-                                             &cred_key_correctness_proof,
-                                             &cred_values,
-                                             &credential_nonce).unwrap();
-
-        let cred_issuance_nonce = new_nonce().unwrap();
-
-        let rev_idx = 1;
-        let (mut cred_signature, signature_correctness_proof, rev_reg_delta) =
-            issuer::Issuer::sign_credential_with_revoc("CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW",
-                                                       &blinded_credential_secrets,
-                                                       &blinded_credential_secrets_correctness_proof,
-                                                       &credential_nonce,
-                                                       &cred_issuance_nonce,
-                                                       &cred_values,
-                                                       &cred_pub_key,
-                                                       &cred_priv_key,
-                                                       rev_idx,
-                                                       n,
-                                                       false,
-                                                       &mut rev_reg,
-                                                       &rev_key_priv,
-                                                       &simple_tail_accessor).unwrap();
-        let mut rev_reg_delta = rev_reg_delta.unwrap();
-
-        let mut witness = Witness::new(rev_idx, n, false, &rev_reg_delta, &simple_tail_accessor).unwrap();
-
-        Prover::process_credential_signature(&mut cred_signature,
-                                             &cred_values,
-                                             &signature_correctness_proof,
-                                             &credential_secrets_blinding_factors,
-                                             &cred_pub_key,
-                                             &cred_issuance_nonce,
-                                             Some(&rev_key_pub),
-                                             Some(&rev_reg),
-                                             Some(&witness)).unwrap();
-
-        // Populate accumulator
-        for i in 2..n {
-            let index = n + 1 - i;
-
-            simple_tail_accessor.access_tail(index, &mut |tail| {
-                rev_reg_delta.accum = rev_reg_delta.accum.sub(tail).unwrap();
-            }).unwrap();
-
-            rev_reg_delta.issued.insert(i);
-        }
-
-        // Update NonRevoc Credential
-
-        let start_time = time::get_time();
-
-        witness.update(rev_idx, n, &rev_reg_delta, &simple_tail_accessor).unwrap();
-
-        let end_time = time::get_time();
-
-        println!("Update NonRevocation Credential Time: {:?}", end_time - start_time);
-
-        let total_end_time = time::get_time();
-        println!("Total Time for {} credentials: {:?}", n, total_end_time - total_start_time);
-
-        println!("Update Proof test -> end");
-    }
-
     #[test]
     #[ignore]
     fn generate_proof_mocks() {
@@ -2098,8 +1630,6 @@ mod tests {
         let cred_signature = mocks::credential();
         let cred_values = issuer::mocks::credential_values();
         let cred_pub_key = issuer::mocks::credential_public_key();
-        let rev_reg = issuer::mocks::revocation_registry();
-        let witness = issuer::mocks::witness();
 
         let sub_proof_request = mocks::sub_proof_request();
 
@@ -2110,9 +1640,7 @@ mod tests {
                                             &non_credential_schema,
                                             &cred_signature,
                                             &cred_values,
-                                            &cred_pub_key,
-                                            Some(&rev_reg),
-                                            Some(&witness)).unwrap();
+                                            &cred_pub_key).unwrap();
         let proof_request_nonce = new_nonce().unwrap();
         let proof = proof_builder.finalize(&proof_request_nonce).unwrap();
 
@@ -2131,7 +1659,6 @@ mod tests {
 
 pub mod mocks {
     use super::*;
-    use self::issuer::mocks as issuer_mocks;
 
     pub const PROVER_DID: &'static str = "CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW";
 
@@ -2148,7 +1675,6 @@ pub mod mocks {
     pub fn blinded_credential_secrets() -> BlindedCredentialSecrets {
         BlindedCredentialSecrets {
             u: primary_blinded_credential_secrets_factors().u,
-            ur: Some(revocation_blinded_credential_secrets_factors().ur),
             hidden_attributes: primary_blinded_credential_secrets_factors().hidden_attributes,
             committed_attributes: primary_blinded_credential_secrets_factors().committed_attributes
         }
@@ -2156,8 +1682,7 @@ pub mod mocks {
 
     pub fn credential_secrets_blinding_factors() -> CredentialSecretsBlindingFactors {
         CredentialSecretsBlindingFactors {
-            v_prime: primary_blinded_credential_secrets_factors().v_prime,
-            vr_prime: Some(revocation_blinded_credential_secrets_factors().vr_prime)
+            v_prime: primary_blinded_credential_secrets_factors().v_prime
         }
     }
 
@@ -2167,13 +1692,6 @@ pub mod mocks {
             v_prime: BigNumber::from_dec("6234844602485198065715756912521084242993832843051505355881690088421550551850125549467092918472695354667100784726622500908091984895363871286940784380653569775818713255809878796986154551268879573825031821103450254794930344156466843783745517992101460563664971267756222007515829473274370597181721580148128191921140248433916209946579773949932257689092058069152841665645156998538141017773327123384878437182202653889178001096252517024209221623151798643305483807921036895305555116721867996362173429413895058464367314162481624252843139719897874833510487628409201743567035205919178492111631830988434158830013048075011555896064621456955153949773969786").unwrap(),
             hidden_attributes: btreeset!["master_secret".to_string()],
             committed_attributes: BTreeMap::new()
-        }
-    }
-
-    pub fn revocation_blinded_credential_secrets_factors() -> RevocationBlindedCredentialSecretsFactors {
-        RevocationBlindedCredentialSecretsFactors {
-            ur: PointG1::from_string("false 19C7E3A5BC00073DFDF072C87818E94E5036FABABCECED727CA52B35CD13623E 14338266060779CA8E7881A8C6F01D76493C6E2E0799699B48B9B0C37EFB7F10 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8").unwrap(),
-            vr_prime: GroupOrderElement::from_string("208420C983A52DB6FEEAC0B4401E1C644DE02CEDB54A5B9727E67C15D42D3F47").unwrap(),
         }
     }
 
@@ -2190,8 +1708,7 @@ pub mod mocks {
 
     pub fn credential() -> CredentialSignature {
         CredentialSignature {
-            p_credential: primary_credential(),
-            r_credential: Some(issuer::mocks::revocation_credential())
+            p_credential: primary_credential()
         }
     }
 
@@ -2201,26 +1718,9 @@ pub mod mocks {
 
     pub fn primary_credential() -> PrimaryCredentialSignature {
         PrimaryCredentialSignature {
-            m_2: issuer_mocks::m2(),
-            a: BigNumber::from_dec("95840110198672318069386609447820151443303148951672148942302688159852522121826159131255863808996897783707552162739643131614378528599266064592118168070949684856089397179020395909339742237237109001659944052044286789806424622568162248593348615174430412805702304864926111235957265861502223089731337030295342624021263130121667019811704170784741732056631313942416364801356888740473027595965734903554651671716594105480808073860478030458113568270415524334664803892787850828500787726840657357062470014690758530620898492638223285406749451191024373781693292064727907810317973909071993122608011728847903567696437202869261275989357").unwrap(),
+            a: BigNumber::from_dec("69588387089599079322064085017393896513135428719995140690654925750532180783198285129615247510283473106480892987856891203655172172216420014251021950506126541635781562906309102290229926628372203645698798041303077556948420339302853735495625331108451511834021494010207013287328680505720810915984165051286846859229114001852079088365747171391521676457855442543360021133102433674111721692508498410153497454815832219314917850142665854901119711462352667105196658376896216305115121531964082378561094604401628286685205379861159090524060126964694766705343231757058793293285284562461928603549293607587641042278139296944359132761567").unwrap(),
             e: BigNumber::from_dec("259344723055062059907025491480697571938277889515152306249728583105665800713306759149981690559193987143012367913206299323899696942213235956742929737627098149467059334482909224329289").unwrap(),
             v: BigNumber::from_dec("5177522642739961905246451779745106415833631678527419493097979847130674994322175317813358680588112397645817545181196877920447218934221099725680400456473461773006574524248907665384069518157432557230427794792544714775524902716631869307992674890701616332103616420135180307240542722829685362316354032918997175853064288731457227803175575337112574432904127165206560820902041401274516490327091476187030657201035927133430393941435525975335190749278773148315112822506617623675477992756350007489528613526034511833547894815621871575785462157607204578035548822396308273354001083587343882755447719022481211554294628383454636017668696472984966918067804683145814957304587119358302001854977263434073677172744911862627274079939469529048710473175607519218460813606549569599500786512608765354400191406122436231062562384489882363964080152503").unwrap(),
-        }
-    }
-
-    pub fn revocation_credential() -> NonRevocationCredentialSignature {
-        NonRevocationCredentialSignature {
-            sigma: PointG1::from_string("false 61FEBE2CFEAA04 5440090222C6AC E933B40264261C A5AA97421F4AEB 1D18E69F 23DDFBC92248BC F4CD0C7051CBEC 7057318CAFB551 B88E41A2CB508A 1461756F FFFFFF7D07A8A8 FFFF7888802F07 FFC63D474548B7 F417D05FB10933 95E45DD").unwrap(),
-            c: GroupOrderElement::from_string("250DCBD902AA4C DACB681C7E461 38E136EE1709BA 73C0CC0780C602 1AF7987A").unwrap(),
-            vr_prime_prime: GroupOrderElement::from_string("82AD6D5A28057D 249C7DE575B04 C8DCE90C7B2A5E 131D9D72956B4 1DF0DB17").unwrap(),
-            witness_signature: WitnessSignature {
-                sigma_i: PointG2::from_string("false 7F776B0F39CC6F 94D2756312D6D9 DA89E7F1530B93 364915CE54A5E1 2680D6A 53C7407A3AF9AC 59BF2A8957F1C8 CB93EC5E8EE75D 864E2703884B81 15DE23D8 9A70E82C370335 FFC1864755EBB7 9B7F220E00A944 18E9FF42298D7B 6B72EAC EAF36C13DFD06F BEE2F1B3FE954 BE121EE8DF2C7F CC4368D001D9F0 116BF610 FFFFFF7D07A8A8 FFFF7888802F07 FFC63D474548B7 F417D05FB10933 95E45DD 0 0 0 0 0").unwrap(),
-                u_i: PointG2::from_string("false D540513002E157 95568C8E8157E5 64E2F4BFEEC606 8CFA0A0F9F6C0D 76EF2B8 3AF7BD1F488386 260E33A289B893 3849E25048B145 B8658101B73033 3D08363 4A7D1682403EB 89449BA919077B EAE01A470A6B16 F4A319CD5C8066 19C0C5E9 9881CB0EA6BCE9 16E3494EE75A08 7CA6B06B0F55C6 8C9E9B456163E8 1A521BBD FFFFFF7D07A8A8 FFFF7888802F07 FFC63D474548B7 F417D05FB10933 95E45DD 0 0 0 0 0").unwrap(),
-                g_i: PointG1::from_string("false B8A039A309E618 CB462817D7FA39 D76E63681DE743 D992E2E8E63447 15A85746 698A99317E892F 35D22342F7CEC6 468968DDB4D3CD A4DF81C629EE8E 8271151 FFFFFF7D07A8A8 FFFF7888802F07 FFC63D474548B7 F417D05FB10933 95E45D").unwrap()
-            },
-            g_i: PointG1::from_string("false B8A039A309E618 CB462817D7FA39 D76E63681DE743 D992E2E8E63447 15A85746 698A99317E892F 35D22342F7CEC6 468968DDB4D3CD A4DF81C629EE8E 8271151 FFFFFF7D07A8A8 FFFF7888802F07 FFC63D474548B7 F417D05FB10933 95E45DD").unwrap(),
-            i: 1,
-            m2: GroupOrderElement::from_string("7D412BFCA6D402 79B043B875CBB3 701CAE80805BED 1F6D7DD6247DBE 99A79BA").unwrap()
         }
     }
 
@@ -2235,8 +1735,7 @@ pub mod mocks {
 
     pub fn subproof() -> SubProof {
         SubProof {
-            primary_proof: primary_proof(),
-            non_revoc_proof: Some(non_revoc_proof())
+            primary_proof: primary_proof()
         }
     }
 
@@ -2249,8 +1748,8 @@ pub mod mocks {
 
     pub fn primary_equal_init_proof() -> PrimaryEqualInitProof {
         PrimaryEqualInitProof {
-            a_prime: BigNumber::from_dec("93850854506025106167175657367900738564840399460457583396522672546367771557204596986051012396385435450263898123125896474854176367786952154894815573554451004746144139656996044265545613968836176711502602815031392209790095794160045376494471161541029201092195175557986308757797292716881081775201092320235240062158880723682328272460090331253190919323449053508332270184449026105339413097644934519533429034485982687030017670766107427442501537423985935074367321676374406375566791092427955935956566771002472855738585522175250186544831364686282512410608147641314561395934098066750903464501612432084069923446054698174905994358631").unwrap(),
-            t: BigNumber::from_dec("10403187904873314760355557832761590691431383521745031865309573910963034393207684410473727200515283477478376473602591257259106279678624852029355519315648291936226793749327383847453659785035143404901389180684693937348170201350989434402765939255768789625180291625978184555673228742169810564578048461551461925810052930346018787363753466820600660809185539201223715614073753236155593704206176748170586820334068878049220243421829954440440126364488974499959662371883050129101801650402485085948889890560553367693634003096560104152231733949195252484402507347769428679283112853202405399796966635008669186194259851326316679551259").unwrap(),
+            a_prime: BigNumber::from_dec("19883399523233445757617812405021305371179271231356899576046510063882878741566731214018630067914432765487789080396932927081428506125484726895534682125085824198427451328858207202630378396555150820419806574033540559797680291364426957684183290220720264686680046956761275977174845571230000887026198911995600617792351246894155277314515203956726428003311328652139523906284990950913093999418017526426652475332204964479597594483919307067219843548854362382641958939841578065887353284303898770353381958434350787110135938862362263518065888837447553094000019858655100007869589849873667652731017665551097477484430076203886206794371").unwrap(),
+            t: BigNumber::from_dec("24735941777895529105404791875677543193768790809044401882213176069297746596979908303045602781737273082325834321313102509105261035350172857739519848575665507246590968635569697846017522027350227113786826534000327321925751471543441335011436516936908551111872665325183937529233459517434872865188836825197568138101088329512606597175637083157790106170810113929317513223926839486848824617767537866976952033271311058437391529262575662520038666412921806596059429973742472709048576355721805055483994170222252078224605850854735401965559215984156252015804210704887914024713943308918331978124221492540200419602908463972950379120737").unwrap(),
             e_tilde: BigNumber::from_dec("162083298053730499878539835193560156486733663622707027216327685550780519347628838870322946818623352681120371349972731968874009673965057322").unwrap(),
             e_prime: BigNumber::from_dec("60494975419025735471770314879098953").unwrap(),
             v_tilde: BigNumber::from_dec("241132863422049783305938184561371219250127488499746090592218003869595412171810997360214885239402274273939963489505434726467041932541499422544431299362364797699330176612923593931231233163363211565697860685967381420219969754969010598350387336530924879073366177641099382257720898488467175132844984811431059686249020737675861448309521855120928434488546976081485578773933300425198911646071284164884533755653094354378714645351464093907890440922615599556866061098147921890790915215227463991346847803620736586839786386846961213073783437136210912924729098636427160258710930323242639624389905049896225019051952864864612421360643655700799102439682797806477476049234033513929028472955119936073490401848509891547105031112859155855833089675654686301183778056755431562224990888545742379494795601542482680006851305864539769704029428620446639445284011289708313620219638324467338840766574612783533920114892847440641473989502440960354573501").unwrap(),
@@ -2260,9 +1759,7 @@ pub mod mocks {
                 "height".to_string() => BigNumber::from_dec("6461691768834933403326572830814516653957231030793837560544354737855803497655300429843454445497126567767486684087006218691084619904526729989680526652503377438786587511370042964338").unwrap(),
                 "master_secret".to_string() => BigNumber::from_dec("67940925789970108743024738273926421512152745397724199848594503731042154269417576665420030681245389493783225644817826683796657351721363490290016166310023506339911751676800452438014771736117676826911321621579680668201191205819012441197794443970687648330757835198888257781967404396196813475280544039772512800509").unwrap(),
                 "sex".to_string() => BigNumber::from_dec("6461691768834933403326572830814516653957231030793837560544354737855803497655300429843454445497126567767486684087006218691084619904526729989680526652503377438786587511370042964338").unwrap()
-            ],
-            m2_tilde: BigNumber::from_dec("14049198043322723487718055550558829839278677959655715165983472882418452212100").unwrap(),
-            m2: BigNumber::from_dec("69500003785041890145270364348670634122591474903142468939711692725859480163330").unwrap(),
+            ]
         }
     }
 
@@ -2354,7 +1851,7 @@ pub mod mocks {
             revealed_attrs: btreemap![
                 "name".to_string() => BigNumber::from_dec("66682250590915135919393234675423675079281389286836524491448775067034910960723").unwrap()
             ],
-            a_prime: BigNumber::from_dec("93850854506025106167175657367900738564840399460457583396522672546367771557204596986051012396385435450263898123125896474854176367786952154894815573554451004746144139656996044265545613968836176711502602815031392209790095794160045376494471161541029201092195175557986308757797292716881081775201092320235240062158880723682328272460090331253190919323449053508332270184449026105339413097644934519533429034485982687030017670766107427442501537423985935074367321676374406375566791092427955935956566771002472855738585522175250186544831364686282512410608147641314561395934098066750903464501612432084069923446054698174905994358631").unwrap(),
+            a_prime: BigNumber::from_dec("19883399523233445757617812405021305371179271231356899576046510063882878741566731214018630067914432765487789080396932927081428506125484726895534682125085824198427451328858207202630378396555150820419806574033540559797680291364426957684183290220720264686680046956761275977174845571230000887026198911995600617792351246894155277314515203956726428003311328652139523906284990950913093999418017526426652475332204964479597594483919307067219843548854362382641958939841578065887353284303898770353381958434350787110135938862362263518065888837447553094000019858655100007869589849873667652731017665551097477484430076203886206794371").unwrap(),
             e: BigNumber::from_dec("162083298053730499878539837415798033696428693449892281052193919207514842725975444071338657195491572547562439622393591965427898285748359108").unwrap(),
             v: BigNumber::from_dec("241132863422049783305938040060597331735278274539541049316128678268379301866997158072011728743321723078574060931449243960464715113938435991871547190135480379265493203441002211218757120311064385792274455797457074741542288420192538286547871288116110058144080647854995527978708188991483561739974917309498779192480418427060775726652318167442183177955447797995160859302520108340826199956754805286213211181508112097818654928169122460464135690611512133363376553662825967455495276836834812520601471833287810311342575033448652033691127511180098524259451386027266077398672694996373787324223860522678035901333613641370426224798680813171225438770578377781015860719028452471648107174226406996348525110692233661632116547069810544117288754524961349911209241835217711929316799411645465546281445291569655422683908113895340361971530636987203042713656548617543163562701947578529101436799250628979720035967402306966520999250819096598649121167").unwrap(),
             m: hashmap![
@@ -2362,8 +1859,7 @@ pub mod mocks {
                 "sex".to_string() => BigNumber::from_dec("6461691768834933403326575020439114193500962122447442182375470664835531264262887123435773676729731478629261405277091910956944655533226659560277758686479462667297473396368211269136").unwrap(),
                 "height".to_string() => BigNumber::from_dec("6461691768834933403326572830814516653957231030793837560544354737855803497655300429843454445497126574195981378365198960707499125538146253636400775219219390979675126287408712407688").unwrap(),
                 "age".to_string() => BigNumber::from_dec("6461691768834933403326572830814516653957231030793837560544354737855803497655300429843454445497126568685843068983890896122000977852186661939211990733462807944627807336518424313388").unwrap()
-            ],
-            m2: BigNumber::from_dec("2553030889054034879941219523536672152702359185828546810612564355745759663351165380563310203986319611277915826660660011443138240248924364893067083241825560").unwrap(),
+            ]
         }
     }
 
@@ -2420,92 +1916,6 @@ pub mod mocks {
         PrimaryProof {
             eq_proof: eq_proof(),
             ne_proofs: vec![ne_proof()]
-        }
-    }
-
-    pub fn init_non_revocation_proof() -> NonRevocInitProof {
-        NonRevocInitProof {
-            c_list_params: NonRevocProofXList {
-                rho: GroupOrderElement::from_string("1D9432ACD304045A4F0E92AFB7E29BE4E304B57AC31CEC0D038A2A9CF5B0ECAC").unwrap(),
-                r: GroupOrderElement::from_string("2501A88F0A8111DB183D0C8BA4C20EC221EAADF916991A1C4024B4BBA5DB9933").unwrap(),
-                r_prime: GroupOrderElement::from_string("1091EF19CA17B50750375E43726262AB3B57996B163E14A60203B234DB3441D4").unwrap(),
-                r_prime_prime: GroupOrderElement::from_string("1AC83CB0D2FA395CA8BBE52343CAB09F57CECE92BDFF8F4538D5055082A70A68").unwrap(),
-                r_prime_prime_prime: GroupOrderElement::from_string("18593C297112FA3BBE8FC2BF3048382937D3ABC60A7E4643F8D34948AE816A31").unwrap(),
-                o: GroupOrderElement::from_string("198A91ADEB4299D372EA58BA53401DBB1C77426652C38F6DA727F9DA9768BC96").unwrap(),
-                o_prime: GroupOrderElement::from_string("16AC4873732A14ED70AA894C66E9F14FB2A6B30A8FF71E1231259B3946C9D4A9").unwrap(),
-                m: GroupOrderElement::from_string("1C711A92F25EF18A496A45E2EE429481583CDD01B4ACC63386E4982647B10AEA").unwrap(),
-                m_prime: GroupOrderElement::from_string("1C9D01A3CC41CF3AD171A5E7E29C6E7423F2D09865A68A74A5110DF73182F127").unwrap(),
-                t: GroupOrderElement::from_string("0EB3CF17C8C6E60B0E46C2D475F22EE97DC0AEE10358FF21C8ADAD18FDDE30C5").unwrap(),
-                t_prime: GroupOrderElement::from_string("0314899F2FC10CD76785553F58E661D36607E159C1517FA490A07F08476E5AB9").unwrap(),
-                m2: GroupOrderElement::from_string("099A79BA1F6D7DD6247DBE701CAE80805BED79B043B875CBB37D412BFCA6D402").unwrap(),
-                s: GroupOrderElement::from_string("07D1132A74742156EA34EE02CD0A782F36182CC464DFBFBD0DB009D6601604D9").unwrap(),
-                c: GroupOrderElement::from_string("02361F8FC95B27163873DF7D2C9B5223FAB7307B5E69297040FC3A0DC778C70B").unwrap(),
-            },
-            tau_list_params: NonRevocProofXList {
-                rho: GroupOrderElement::from_string("22674C7D4598BDE2886E9F5814262169011171826D0041F7A12F1C9EA7FAAB4C").unwrap(),
-                r: GroupOrderElement::from_string("177AD1C080B6D7592BECCC2E12F8BC58EB820E575333F20E87DFBA527CDEB256").unwrap(),
-                r_prime: GroupOrderElement::from_string("01C6D18A136F4DB647040FCE2FF60BD8B50DB6D4DA526AFA95E11E4E48BC4AC3").unwrap(),
-                r_prime_prime: GroupOrderElement::from_string("0B2225568BBA7C53D7E87248114E1936A2D39FF1A033631C8640F5A8778FF8E8").unwrap(),
-                r_prime_prime_prime: GroupOrderElement::from_string("0B6C0D13376608BD7617BEBA905852B13E13D9341B8D3A0BCB720123FAFF4C5A").unwrap(),
-                o: GroupOrderElement::from_string("241B8DA0709C781DD07F42BBB22548D9D4EEB9467C70B91BA04A4CC2356D98B3").unwrap(),
-                o_prime: GroupOrderElement::from_string("06947A2E110FE1D3DF8A253E7122B4486FF435DA7321DAAE7097A002E7AE6612").unwrap(),
-                m: GroupOrderElement::from_string("194F785E44112C1CF3DAFC328EC6AEB764CC026697C521E7384FABBC3D15A918").unwrap(),
-                m_prime: GroupOrderElement::from_string("073C5D9384EFD20CCE013ABBD5D5532C248E7D665C7EDB74CD1BB49B5FC458E7").unwrap(),
-                t: GroupOrderElement::from_string("1172571F3FB78814E96FD962B2BD31C1BC7937E8C58FA05942372F58AEDBB4AC").unwrap(),
-                t_prime: GroupOrderElement::from_string("0E4FEED449204DBF040B11D8130635467C9429496BDA901DCE27AB5074A81972").unwrap(),
-                m2: GroupOrderElement::from_string("1F0F9075F1F788A63440BC716F30DBCDB8010B8557020CC20B2156CC1D7B2984").unwrap(),
-                s: GroupOrderElement::from_string("0EA2C0F584D879AFACFE99CCF2DF0AFCCA7DEF831F0E28F05C2DE752A04C7430").unwrap(),
-                c: GroupOrderElement::from_string("01594829F554147480C7111A84A8BEB96D7983514DA58858A0819BCE9EE02FC4").unwrap(),
-            },
-            c_list: NonRevocProofCList {
-                e: PointG1::from_string("false 3FCE336A100BAB7A3C3281A9FAD9451A4168E72D7F024B287187EEAF680B4A36 47A69A514C9400040AE4A8DBABD11D194299551A3A89648331E7EDD567DD92E8 0C69F45CCEC5BEE692BD1FC1477E3A95CD33F239A98C89CA17C117C7422992B4").unwrap(),
-                d: PointG1::from_string("false 2B577B63FFB1C1F315E1DC2AA291D2AEA24EB90B321EFB56D3CFA66C3918514F 458E018046A549B8E5F0DF003257FFDE81830325D25EB7E2DD5D8C8CDE96778F 1382E98C91C0DE4FCF6B4F615A73CF9DEB7DF0BACB0792D4B66F0F0289DBF93B").unwrap(),
-                a: PointG1::from_string("false 2510E16FE9ADD741D0464E57D17ECA374FFB9AA28769090E48DBC13D7E8A33E0 657297D1EF240490E4DC9BCC1444DE2EF59886BB828C980E9DCE9ADCE45A4605 17B7ABA2E091EB43A8B85EEAD54FC578CFF132713D99D7DA5C8DD5AC68A80225").unwrap(),
-                g: PointG1::from_string("false 2ACF58F0B9370ECEA4C42D3D0BDB3C423D50AE0931060B89ED4692B4F2A26AE5 5D47FDD2CB9B03A8A4FDF93175469DBFCEAA4DF0EFEFF335CE5B4AACC7B3744C 14618FF346DFF513041C6E498D5BAF7E74E882D060A84BA9088FD395B3BE086F").unwrap(),
-                w: PointG2::from_string("false 1BCA7F68CF1654884058B9E4D72445A5FE5524CC7FC9F7BC5D31429403AFB0D0 20A9ADD723820F077B129B95A052167C2B0AFD30291A5458C93C8F98067CF378 0A02522BB69029B9AAF3544E14A1D637EDF87139E0919E63537259B9061913F9 19BC32202E297B4851A2223F3ADDB64CBF875F9F2ECFB7F6DDDD4888AC016D57 095E45DDF417D05FB10933FFC63D474548B7FFFF7888802F07FFFFFF7D07A8A8 0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
-                s: PointG2::from_string("false 7A574E39839EBC8E7F8D567865D5D9AAC54952659F0E393BE35C7FC3BE93CDA6 AFB9BF4A3B655BFFDC89C14720101773569FDD36A67440AEB7C2FFB861B74025 1F25D2A75390350C9C77DE886B503D5EA2CC3685037460F9CF93601BFA88028E 306E80C709AAA293B8D2AAABF04838C8AB96BFB3F8E0C4A89940D227A8BF8B01 6867E792BBE850A8716C97F7140D95FD6DB76C5DB0F4876E800B18E2CB0226B3 427CB9FC452B316239ABCA9C0078E5F36B4E9FC777B6D91587BB7DA64C1C1E94").unwrap(),
-                u: PointG2::from_string("false A460269097754F709D057229B3B195516E876CFFC4111977B22995D5B792321C 87B76B62E59EBD7281AFBEA28787110ED9A86AFFD087B62E60EA9A5232B7E92A 36C90005C0134A0CFE967B2C63D43E4CF9F6D00CF4EB802A9CFF249B4BA0B0AE ED139245196427A65CE4F35F756462E1EC00D6B59A50713BCBB32EE24320FD74 6A0FD899BC2C75711AC67E794D44AC6583E2510CEDD397E646327877521C2D90 02EECF9230533915443530F16F69AE45D4B27F327DB48DDFC84AB71272756C5D").unwrap(),
-            },
-            tau_list: NonRevocProofTauList {
-                t1: PointG1::from_string("false 3678700324C153C979FD58E67B12B2296E7CB7DE65CC908BF13061D958599372 4899713BD6A1DC1330EF6BB7D9E236D8040F043536B649C2878E1C4E1E9F1E7A 01482F9115E53AC4AF12D7DD66B6CC87D997F8BC7EC138960AB023F4477A79A3").unwrap(),
-                t2: PointG1::from_string("false 5702010CE630B0FE95AC373350AD96F5802BD34FF51D2ACD977CA87E1D62FA9E 66A362A8AEA12987B4B57CFAA9FB7995E2219CAA9A0F7F90A0EB7233002B21E6 18144B5641C33799E32E2B45E3F984BEF072F857C1E98F334E21A9932A2130AA").unwrap(),
-                t3: Pair::from_string("210B51DBD9726CF0CDBFA3803285C73F17A9E43267F2461FAB2FE4DFE1A46F49 08C30A04E07CD7353B10D5D451FD7A6E85892B1BC605543AECC75F938CE0F9C8 1D58388870144A5D071871C5E2A1FF0CE7B517380E6ADF7325572D8C7D924D19 09E20633DCD5743930A7B4327A4E202957BE0A5793DA336E9DF752222178D515 05C57A7A26B08EB6147A80DA5C8083BCCDA2E2F5F57D91DBF2F0D28BFC238578 1F9FC5FAF9255E04EE123CC26D4577FAEF96CB92734E9E0722078E07D8BC2728 1C9265D1B308C907152A1DEDD6E500C6378DCCDC748141BF232F4C8341CDF86B 1761FC0F8284812FA0C83D4081717D6C44637C53E68BE3113E427ACF6366CA59 091E6E55B798DA22EBD513826781748A8EF99DA756D9CB7B7AC6CF1D7F34A02E 1FC3B54A65D9C07CC87540CE5CC9D391625A75616631E4086028F1B7C5D89541 15AC82C66461442C0200D69E0795AC2025746DB33677FE50FF87B423F7E9B883 1FC6B6EFFC9FBE71BBD95080A5236180DEBA1BC83BD658EB54FBC188DC2E2167").unwrap(),
-                t4: Pair::from_string("1089AEFD24F60F8A18B2E984ABB1EFBDE1F52E5703978652E4F559B558568F00 12FFB2C01C28B2523E6BBB00E8011DAE578060942E9FF0DD2BE0550ED79B610A 0A8A9EB60DE3F9F26FEAC0B336C83289455F9BE8465A8A1C4272357BA6624136 12523BC395D1EF22E5623D5C4BABCD6E24086A2D8CE5E73F9C0AF377021835DE 0DE69863DE3001C9EA78C4633386B385D7B54E46BDCDE3AA664E9D466474F164 081D419FB1768840B262E7DDDD779FC3FD60C75D4B617F38A72100B10EB4F866 0598A8ED655451AD6AA1B72CC71441BBDE106091232786A4EB46458D320AE1D2 24F131F1E7ACF6EAC4D3CB3E50D4D63D2A5C2DA9E7382C557091DD81867CAE43 129B4824ECBF8FC8FFFC532ED71C2B2F0DF4D31F70DC453C374FCB9EAC7CDAB2 185D20599BF59AD8B50BB52D3A1FF226480CC1F12B735A43500ED10302BCB912 06CF10272742931E12B464ACED9F3ADED3278653D4C3E8893B22E99F8CBD0CC3 243C4C16F0AC7FBB3115FEEE1BE1061037184BE80A43D46CB5C431848A41206E").unwrap(),
-                t5: PointG1::from_string("false 31F880D47752BBBF303ECAD8A109D51A552EBC84B407A1E510239BE83F71CABC 593B9A26E0A8C868FC72A0EE9E297E6D1E01D507B8BF84D1B958623E2A9619FA 04445E0188187C505D91CCEBA44AA576C2ECE7F36E878FAD2BD35CC32FDBC48D").unwrap(),
-                t6: PointG1::from_string("false 3D55331C9A315DB3BB6F9DE5BBEC1DE9A4E7FEA55734A98E0DC078373DD322F4 66427E6FFF1A13C4F7B6B9581C21FDBACE14CD0FBB2648C00424E814FB1FCD62 045E87648DF9D4EBE16971F77F419B042594A946A9EF03E0374A8D875D96104E").unwrap(),
-                t7: Pair::from_string("229E5A94E69BACAD5654F32A3BBB00C43493F587E726F82F9F6BF617224E4CF3 23B2FA97ECE60840C67AD332F8E0B1702B2231D93CF371F1BAB75BBEDD0B7565 0663D0C34F59CF2B2EC00DD9C2F0FAE14AE0A795043D98654A2581921C62F012 008EE4574B7DAA690616BFE11775A129AA9BCD5AB1B2D661A32FA571E3BFF816 054950BDAFBD304ADAD36CC530979B467E22595C5003D5BB652F475F2C7CEB30 122FED2EA0C702628F4F3C0716514958414E22EF123884BF34A01ED36128EA5B 07342D1B986A86681B3D54E8B84785098ADF4BD931FD09862A5843188B155AEF 041DE3D2209F3DE93E90668DC57FB4BF4C9ECA8985E39971C17D6A963E5DAB86 0EA5790E1EE3A385B4AEE2D206C971C7523A8AE2105C4C4CFBF5A695AFDF6F12 15C9066E4F711DD6697A1ABA3CCCBF9F535B16AD2E1D898E7BB0E195CEC810C4 1150FD2405146DBA647C4DAB59A5AA104A78C63A584DE7E0CF89F1D711FA08F6 001591FB803FC84CB514ADF0CA0DCFBC974FDDEFBED8178CF7A0046E5FF148C9").unwrap(),
-                t8: Pair::from_string("1A0FB1F80E3C1FB1D99656B1B6DDF183D5EF4760838C68B088E892C846B7DC2C 1235B7EF46F16A30D6481B2A63E672EBCD931DFE1FE8B4101EA6F8A65FBDCD05 02CFBC531AD1C591ACC4F90806D4C8D1D2E7CA1701281076E62DFDFCB743ED0F 2472470CB4C5E83208F7CB8FA1C2AFE168CE964EAC3AA0F00D0F851B9BFD640B 15010B4BD62468BB8D19513CA350D731E47E034570164DFAE0939F2540FE6132 145BB54DDFB66D9C48655F9F7700CC2A341A7BB0B73BA0271927D23A1C9F80A0 236FB4C3A3500BF02E7A95A8041ED9C789D57DE3EB9952F773EF8C35953B1FA9 152902DA32832510A0DBDE0BE32F6E0DC01374D0DA5B00B30E7A5DFEDF9DE0C7 15A9F25FC4079A513FA5B1982AE2808F5D577A8CAE17A030B03B3B10E4606449 0CCF8D3EF066E5C4C79106F0A4A5490DD69507161510E56CA43FA304277D2DC7 14AB69814995CABA1A07C0B5F8A75B27074CA5CD4213974007B866E0BFE3CA06 0151272518EBB8E894FEFB11E19BB4D748F31213DB50454659E1011C2B73FC7C").unwrap(),
-            }
-        }
-    }
-
-    pub fn non_revoc_proof() -> NonRevocProof {
-        NonRevocProof {
-            x_list: NonRevocProofXList {
-                rho: GroupOrderElement::from_string("862EAEC368F8BE 848D2F871E101A 2E91FFA9DE85A7 AC1F5A5C4BDE56 16E43DCF").unwrap(),
-                r: GroupOrderElement::from_string("D0642C8FC9CD0C 4102C1474B2EC7 D927670781F436 205DEB89AEB30D 2BAA847").unwrap(),
-                r_prime: GroupOrderElement::from_string("50AE77DF5F4FCF 7409D48B6518BC 4072381C958C32 C22B13AC703D7C D63094C").unwrap(),
-                r_prime_prime: GroupOrderElement::from_string("E36B82ADBFD7AA 3CCE79B3E4E774 58B4847D148754 A6D1C5D21ADF4 72FA71B").unwrap(),
-                r_prime_prime_prime: GroupOrderElement::from_string("CED70672958514 C9690F9F0C3C12 9372FA695565DB E3C3BEDB407029 15A0D18A").unwrap(),
-                o: GroupOrderElement::from_string("32FAB652969BE6 517A7FF317757D D34EC9DC7F1186 90E0C9FCEDA9B5 19B2553E").unwrap(),
-                o_prime: GroupOrderElement::from_string("ABAF020163F3F3 B271F5EA6143C2 232BDF2F73D382 B9F72199751258 1A45C9D9").unwrap(),
-                m: GroupOrderElement::from_string("6BBF3F293B6EE4 8B74DBFC74B5B9 C52AFFBD85F720 97DFD5464AE6BE 11C22EEB").unwrap(),
-                m_prime: GroupOrderElement::from_string("60F60877A17AB5 D18C7AFA6DBC2B 259C5531B7A142 E797E2D6C0DDCA B9E2616").unwrap(),
-                t: GroupOrderElement::from_string("15FB7F7FC34B3F 4C2F0140A4A584 14CD6B6D5D455B 9C63345F66E892 21B88E3F").unwrap(),
-                t_prime: GroupOrderElement::from_string("179B1F02AA6FB4 5E1E2ED844C75A BDF47D8F55BF90 192E37622D8CA0 1634FC27").unwrap(),
-                m2: GroupOrderElement::from_string("EB43877A948FC4 52B12394658B53 394E050536B5E6 F44634D076AB0 1D89C97F").unwrap(),
-                s: GroupOrderElement::from_string("84BC05710625A1 DED5F03DF74609 5F72CE7609971B 2B43CA5E2A5C03 350174").unwrap(),
-                c: GroupOrderElement::from_string("7B5C7449CE3E59 34EADC67AD3E9E D634E35BF03EAC 63AE8185057976 9925E1").unwrap()
-            },
-            c_list: NonRevocProofCList {
-                e: PointG1::from_string("false 87EEAF680B4A36 E72D7F024B2871 A9FAD9451A4168 100BAB7A3C3281 3FCE336A E7EDD567DD92E8 551A3A89648331 DBABD11D194299 4C9400040AE4A8 47A69A51 C117C7422992B4 F239A98C89CA17 C1477E3A95CD33 CEC5BEE692BD1F C69F45C").unwrap(),
-                d: PointG1::from_string("false CFA66C3918514F B90B321EFB56D3 2AA291D2AEA24E FFB1C1F315E1DC 2B577B63 5D8C8CDE96778F 325D25EB7E2DD 3257FFDE8183 46A549B8E5F0DF 458E0180 6F0F0289DBF93B F0BACB0792D4B6 615A73CF9DEB7D 91C0DE4FCF6B4F 1382E98C").unwrap(),
-                a: PointG1::from_string("false DBC13D7E8A33E0 9AA28769090E48 57D17ECA374FFB E9ADD741D0464E 2510E16F CE9ADCE45A4605 86BB828C980E9D CC1444DE2EF598 EF240490E4DC9B 657297D1 8DD5AC68A80225 32713D99D7DA5C EAD54FC578CFF1 E091EB43A8B85E 17B7ABA2").unwrap(),
-                g: PointG1::from_string("false 4692B4F2A26AE5 AE0931060B89ED 3D0BDB3C423D50 B9370ECEA4C42D 2ACF58F0 5B4AACC7B3744C 4DF0EFEFF335CE 3175469DBFCEAA CB9B03A8A4FDF9 5D47FDD2 8FD395B3BE086F 82D060A84BA908 498D5BAF7E74E8 46DFF513041C6E 14618FF3").unwrap(),
-                w: PointG2::from_string("false 31429403AFB0D0 24CC7FC9F7BC5D E4D72445A5FE55 CF1654884058B9 1BCA7F68 3C8F98067CF378 FD30291A5458C9 95A052167C2B0A 23820F077B129B 20A9ADD7 7259B9061913F9 7139E0919E6353 4E14A1D637EDF8 B69029B9AAF354 A02522B DD4888AC016D57 5F9F2ECFB7F6DD 3F3ADDB64CBF87 2E297B4851A222 19BC3220 FFFFFF7D07A8A8 FFFF7888802F07 FFC63D474548B7 F417D05FB10933 95E45DD 0 0 0 0 0").unwrap(),
-                s: PointG2::from_string("false 5C7FC3BE93CDA6 52659F0E393BE3 7865D5D9AAC549 839EBC8E7F8D56 17A574E39 C2FFB861B74025 DD36A67440AEB7 4720101773569F 3B655BFFDC89C1 1AFB9BF4A 93601BFA88028E 3685037460F9CF 886B503D5EA2CC 5390350C9C77DE 11F25D2A7 40D227A8BF8B01 BFB3F8E0C4A899 ABF04838C8AB96 9AAA293B8D2AA 1306E80C7 B18E2CB0226B3 6C5DB0F4876E80 F7140D95FD6DB7 BBE850A8716C97 6867E792 BB7DA64C1C1E94 9FC777B6D91587 9C0078E5F36B4E 452B316239ABCA 427CB9FC").unwrap(),
-                u: PointG2::from_string("false 2995D5B792321C 6CFFC4111977B2 29B3B195516E87 97754F709D0572 1A4602690 EA9A5232B7E92A 6AFFD087B62E60 A28787110ED9A8 E59EBD7281AFBE 187B76B62 FF249B4BA0B0AE D00CF4EB802A9C 2C63D43E4CF9F6 C0134A0CFE967B 136C90005 B32EE24320FD74 D6B59A50713BCB 5F756462E1EC00 196427A65CE4F3 ED139245 327877521C2D90 510CEDD397E646 794D44AC6583E2 BC2C75711AC67E 6A0FD899 4AB71272756C5D 7F327DB48DDFC8 F16F69AE45D4B2 30533915443530 2EECF92").unwrap()
-            }
         }
     }
 

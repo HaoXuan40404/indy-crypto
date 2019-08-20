@@ -79,9 +79,9 @@ impl ProofVerifier {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, false).unwrap();
+    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     ///
-    /// let (credential_pub_key, _credential_priv_key, _credential_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, false).unwrap();
+    /// let (credential_pub_key, _credential_priv_key, _credential_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     ///
     /// let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
     /// sub_proof_request_builder.add_revealed_attr("sex").unwrap();
@@ -92,26 +92,20 @@ impl ProofVerifier {
     /// proof_verifier.add_sub_proof_request(&sub_proof_request,
     ///                                      &credential_schema,
     ///                                      &non_credential_schema,
-    ///                                      &credential_pub_key,
-    ///                                      None,
-    ///                                      None).unwrap();
+    ///                                      &credential_pub_key).unwrap();
     /// ```
     pub fn add_sub_proof_request(&mut self,
                                  sub_proof_request: &SubProofRequest,
                                  credential_schema: &CredentialSchema,
                                  non_credential_schema: &NonCredentialSchema,
-                                 credential_pub_key: &CredentialPublicKey,
-                                 rev_key_pub: Option<&RevocationKeyPublic>,
-                                 rev_reg: Option<&RevocationRegistry>) -> Result<(), IndyCryptoError> {
+                                 credential_pub_key: &CredentialPublicKey) -> Result<(), IndyCryptoError> {
         ProofVerifier::_check_add_sub_proof_request_params_consistency(sub_proof_request, credential_schema)?;
 
         self.credentials.push(VerifiableCredential {
             pub_key: credential_pub_key.clone()?,
             sub_proof_request: sub_proof_request.clone(),
             credential_schema: credential_schema.clone(),
-            non_credential_schema: non_credential_schema.clone(),
-            rev_key_pub: rev_key_pub.map(Clone::clone),
-            rev_reg: rev_reg.map(Clone::clone)
+            non_credential_schema: non_credential_schema.clone()
         });
         Ok(())
     }
@@ -139,7 +133,7 @@ impl ProofVerifier {
     /// non_credential_schema_builder.add_attr("master_secret").unwrap();
     /// let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
     ///
-    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema, false).unwrap();
+    /// let (credential_pub_key, credential_priv_key, cred_key_correctness_proof) = Issuer::new_credential_def(&credential_schema, &non_credential_schema).unwrap();
     ///
     /// let master_secret = Prover::new_master_secret().unwrap();
     ///
@@ -169,8 +163,7 @@ impl ProofVerifier {
     ///                                      &signature_correctness_proof,
     ///                                      &credential_secrets_blinding_factors,
     ///                                      &credential_pub_key,
-    ///                                      &credential_issuance_nonce,
-    ///                                      None, None, None).unwrap();
+    ///                                      &credential_issuance_nonce).unwrap();
     ///
     /// let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
     /// sub_proof_request_builder.add_revealed_attr("sex").unwrap();
@@ -183,9 +176,7 @@ impl ProofVerifier {
     ///                                     &non_credential_schema,
     ///                                     &credential_signature,
     ///                                     &credential_values,
-    ///                                     &credential_pub_key,
-    ///                                     None,
-    ///                                     None).unwrap();
+    ///                                     &credential_pub_key).unwrap();
     ///
     /// let proof_request_nonce = new_nonce().unwrap();
     /// let proof = proof_builder.finalize(&proof_request_nonce).unwrap();
@@ -195,9 +186,7 @@ impl ProofVerifier {
     /// proof_verifier.add_sub_proof_request(&sub_proof_request,
     ///                                      &credential_schema,
     ///                                      &non_credential_schema,
-    ///                                      &credential_pub_key,
-    ///                                      None,
-    ///                                      None).unwrap();
+    ///                                      &credential_pub_key).unwrap();
     /// assert!(proof_verifier.verify(&proof, &proof_request_nonce).unwrap());
     /// ```
     pub fn verify(&self,
@@ -213,18 +202,6 @@ impl ProofVerifier {
         for idx in 0..proof.proofs.len() {
             let proof_item = &proof.proofs[idx];
             let credential = &self.credentials[idx];
-            if let (Some(non_revocation_proof), Some(cred_rev_pub_key), Some(rev_reg), Some(rev_key_pub)) = (proof_item.non_revoc_proof.as_ref(),
-                                                                                                             credential.pub_key.r_key.as_ref(),
-                                                                                                             credential.rev_reg.as_ref(),
-                                                                                                             credential.rev_key_pub.as_ref()) {
-                tau_list.extend_from_slice(
-                    &ProofVerifier::_verify_non_revocation_proof(&cred_rev_pub_key,
-                                                                 &rev_reg,
-                                                                 &rev_key_pub,
-                                                                 &proof.aggregated_proof.c_hash,
-                                                                 &non_revocation_proof)?.as_slice()?
-                );
-            };
 
             tau_list.append_vec(
                 &ProofVerifier::_verify_primary_proof(&credential.pub_key.p_key,
@@ -378,7 +355,7 @@ impl ProofVerifier {
             .cloned()
             .collect::<HashSet<String>>();
 
-        let t1: BigNumber = calc_teq(&p_pub_key, &proof.a_prime, &proof.e, &proof.v, &proof.m, &proof.m2, &unrevealed_attrs)?;
+        let t1: BigNumber = calc_teq(&p_pub_key, &proof.a_prime, &proof.e, &proof.v, &proof.m, &unrevealed_attrs)?;
 
         let mut ctx = BigNumber::new_context()?;
 
@@ -466,35 +443,6 @@ impl ProofVerifier {
 
         Ok(tau_list)
     }
-
-    fn _verify_non_revocation_proof(r_pub_key: &CredentialRevocationPublicKey,
-                                    rev_reg: &RevocationRegistry,
-                                    rev_key_pub: &RevocationKeyPublic,
-                                    c_hash: &BigNumber, proof: &NonRevocProof) -> Result<NonRevocProofTauList, IndyCryptoError> {
-        trace!("ProofVerifier::_verify_non_revocation_proof: >>> r_pub_key: {:?}, rev_reg: {:?}, rev_key_pub: {:?}, c_hash: {:?}",
-               r_pub_key, rev_reg, rev_key_pub, c_hash);
-
-        let ch_num_z = bignum_to_group_element(&c_hash)?;
-
-        let t_hat_expected_values = create_tau_list_expected_values(r_pub_key, rev_reg, rev_key_pub, &proof.c_list)?;
-        let t_hat_calc_values = create_tau_list_values(&r_pub_key, rev_reg, &proof.x_list, &proof.c_list)?;
-
-
-        let non_revoc_proof_tau_list = Ok(NonRevocProofTauList {
-            t1: t_hat_expected_values.t1.mul(&ch_num_z)?.add(&t_hat_calc_values.t1)?,
-            t2: t_hat_expected_values.t2.mul(&ch_num_z)?.add(&t_hat_calc_values.t2)?,
-            t3: t_hat_expected_values.t3.pow(&ch_num_z)?.mul(&t_hat_calc_values.t3)?,
-            t4: t_hat_expected_values.t4.pow(&ch_num_z)?.mul(&t_hat_calc_values.t4)?,
-            t5: t_hat_expected_values.t5.mul(&ch_num_z)?.add(&t_hat_calc_values.t5)?,
-            t6: t_hat_expected_values.t6.mul(&ch_num_z)?.add(&t_hat_calc_values.t6)?,
-            t7: t_hat_expected_values.t7.pow(&ch_num_z)?.mul(&t_hat_calc_values.t7)?,
-            t8: t_hat_expected_values.t8.pow(&ch_num_z)?.mul(&t_hat_calc_values.t8)?
-        });
-
-        trace!("ProofVerifier::_verify_non_revocation_proof: <<< non_revoc_proof_tau_list: {:?}", non_revoc_proof_tau_list);
-
-        non_revoc_proof_tau_list
-    }
 }
 
 #[cfg(test)]
@@ -516,6 +464,7 @@ mod tests {
         assert!(sub_proof_request.predicates.contains(&predicate()));
     }
 
+    //FIXME: test error
     #[test]
     fn verify_equality_works() {
         MockHelper::inject();
@@ -537,13 +486,7 @@ mod tests {
                                                                   &non_credential_schema,
                                                                   &sub_proof_request).unwrap();
 
-        assert_eq!("10403187904873314760355557832761590691431383521745031865309573910963034393207684\
-        41047372720051528347747837647360259125725910627967862485202935551931564829193622679374932738\
-        38474536597850351434049013891806846939373481702013509894344027659392557687896251802916259781\
-        84555673228742169810564578048461551461925810052930346018787363753466820600660809185539201223\
-        71561407375323615559370420617674817058682033406887804922024342182995444044012636448897449995\
-        96623718830501291018016504024850859488898905605533676936340030965601041522317339491952524844\
-        02507347769428679283112853202405399796966635008669186194259851326316679551259", res[0].to_dec().unwrap());
+        assert_eq!("24735941777895529105404791875677543193768790809044401882213176069297746596979908303045602781737273082325834321313102509105261035350172857739519848575665507246590968635569697846017522027350227113786826534000327321925751471543441335011436516936908551111872665325183937529233459517434872865188836825197568138101088329512606597175637083157790106170810113929317513223926839486848824617767537866976952033271311058437391529262575662520038666412921806596059429973742472709048576355721805055483994170222252078224605850854735401965559215984156252015804210704887914024713943308918331978124221492540200419602908463972950379120737", res[0].to_dec().unwrap());
     }
 
     #[test]
