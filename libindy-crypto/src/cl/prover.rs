@@ -262,13 +262,20 @@ impl Prover {
         Prover::_check_credential_key_correctness_proof(pr_pub_key, key_correctness_proof)
     }
 
+    /// 检查Issuer发的Primary凭证密钥是正确的
+    /// 输入：
+    ///     CredentialPrimaryPublicKey
+    ///     CredentialKeyCorrectnessProof
+    /// 输出：
+    ///     若验证错误就会报错退出
+    /// 对应论文2.1
     fn _check_credential_key_correctness_proof(pr_pub_key: &CredentialPrimaryPublicKey,
                                                key_correctness_proof: &CredentialKeyCorrectnessProof) -> Result<(), IndyCryptoError> {
         trace!("Prover::_check_credential_key_correctness_proof: >>> pr_pub_key: {:?}, key_correctness_proof: {:?}",
                pr_pub_key,
                key_correctness_proof
         );
-
+        // TODO:
         let correctness_names: HashSet<&String> = HashSet::from_iter(key_correctness_proof.xr_cap.iter().map(|&(ref key, ref _v)| key));
         for r_key in pr_pub_key.r.keys() {
             if !correctness_names.contains(r_key) {
@@ -334,6 +341,13 @@ impl Prover {
         Ok(())
     }
 
+    /// 生成盲化Primary凭证的Factor
+    /// 输入：
+    ///     CredentialPrimaryPublicKey
+    ///     CredentialValues
+    /// 输出：
+    ///     PrimaryBlindedCredentialSecretsFactors
+    /// 对应论文中 公式 2.1、2.2
     fn _generate_blinded_primary_credential_secrets_factors(p_pub_key: &CredentialPrimaryPublicKey,
                                                             credential_values: &CredentialValues) -> Result<PrimaryBlindedCredentialSecretsFactors, IndyCryptoError> {
         trace!("Prover::_generate_blinded_primary_credential_secrets_factors: >>> p_pub_key: {:?}, credential_values: {:?}",
@@ -351,6 +365,7 @@ impl Prover {
             .filter(|&(_, v)| v.is_hidden())
             .map(|(attr, _)| attr.clone())
             .collect::<BTreeSet<String>>();
+        // 公式 2.1
         let u = hidden_attributes.iter().fold(
             p_pub_key.s.mod_exp(
                 &v_prime,
@@ -378,7 +393,7 @@ impl Prover {
 
 
         let mut committed_attributes = BTreeMap::new();
-
+        // 公式 2.2
         for (attr, cv) in credential_values.attrs_values.iter().filter(|&(_, v)| v.is_commitment()) {
             if let &CredentialValue::Commitment { ref value, ref blinding_factor } = cv {
                 committed_attributes.insert(
@@ -420,6 +435,19 @@ impl Prover {
         Ok(revocation_blinded_credential_secrets)
     }
 
+    /// 生成盲化后凭证的正确性证明
+    /// 
+    /// 输入：
+    ///     CredentialPrimaryPublicKey
+    ///     PrimaryBlindedCredentialSecretsFactors
+    ///     nonce
+    ///     CredentialValues
+    /// 
+    /// 输出：
+    ///     BlindedCredentialSecretsCorrectnessProof
+    /// 
+    /// 对应论文公式 2.3、2.4、2.5、2.6、2.7.1、2.7.2
+    /// 
     fn _new_blinded_credential_secrets_correctness_proof(p_pub_key: &CredentialPrimaryPublicKey,
                                                          blinded_primary_credential_secrets: &PrimaryBlindedCredentialSecretsFactors,
                                                          nonce: &BigNumber,
@@ -441,6 +469,7 @@ impl Prover {
         let mut r_tildes = BTreeMap::new();
 
         let mut values: Vec<u8> = Vec::new();
+        // 公式2.4前部分
         let mut u_tilde = p_pub_key.s.mod_exp(
             &v_dash_tilde,
             &p_pub_key.n,
@@ -461,6 +490,7 @@ impl Prover {
             )?;
 
             match *cred_value {
+                // 公式2.4 后部分
                 CredentialValue::Hidden { .. } => {
                     u_tilde = u_tilde.mod_mul(
                         &pk_r.mod_exp(&m_tilde, &p_pub_key.n, Some(&mut ctx))?,
@@ -469,6 +499,7 @@ impl Prover {
                     )?;
                     ()
                 }
+                // 公式2.3
                 CredentialValue::Commitment { .. } => {
                     let r_tilde = bn_rand(LARGE_MTILDE)?;
                     let commitment_tilde = get_pedersen_commitment(
@@ -497,8 +528,10 @@ impl Prover {
         values.extend_from_slice(&u_tilde.to_bytes()?);
         values.extend_from_slice(&nonce.to_bytes()?);
 
+        // 公式2.5
         let c = get_hash_as_int(&vec![values])?;
 
+        // 公式2.6
         let v_dash_cap = c.mul(&blinded_primary_credential_secrets.v_prime, Some(&mut ctx))?
             .add(&v_dash_tilde)?;
 
@@ -514,6 +547,7 @@ impl Prover {
             )?;
 
             match ca {
+                // 公式2.7.1
                 &CredentialValue::Hidden { ref value } => {
                     let m_cap = m_tilde.add(&c.mul(value, Some(&mut ctx))?)?;
                     m_caps.insert(attr.clone(), m_cap);
@@ -523,7 +557,9 @@ impl Prover {
                     ref value,
                     ref blinding_factor,
                 } => {
+                    // 公式2.7.1
                     let m_cap = m_tilde.add(&c.mul(value, Some(&mut ctx))?)?;
+                    // 公式2.7.2
                     let r_cap = r_tildes[attr].add(&c.mul(blinding_factor, Some(&mut ctx))?)?;
 
                     m_caps.insert(attr.clone(), m_cap);
@@ -547,6 +583,7 @@ impl Prover {
         Ok(blinded_credential_secrets_correctness_proof)
     }
 
+    /// 对凭证进行一个偏移： v = v'+v''
     fn _process_primary_credential(p_cred: &mut PrimaryCredentialSignature,
                                    v_prime: &BigNumber) -> Result<(), IndyCryptoError> {
         trace!("Prover::_process_primary_credential: >>> p_cred: {:?}, v_prime: {:?}", p_cred, v_prime);
@@ -576,6 +613,19 @@ impl Prover {
         Ok(())
     }
 
+    /// 验证签名的正确性
+    /// 
+    /// 输入：
+    ///     PrimaryCredentialSignature
+    ///     CredentialValues
+    ///     SignatureCorrectnessProof
+    ///     CredentialPrimaryPublicKey
+    ///     n1
+    ///  
+    /// 输出：
+    ///     若错误则报错
+    /// 
+    /// 论文步骤2.4.1-2.4.3
     fn _check_signature_correctness_proof(p_cred_sig: &PrimaryCredentialSignature,
                                           cred_values: &CredentialValues,
                                           signature_correctness_proof: &SignatureCorrectnessProof,
@@ -600,6 +650,7 @@ impl Prover {
             return Err(IndyCryptoError::InvalidStructure(format!("Invalid Signature correctness proof")));
         }
 
+        // 验证数组完整性
         if let Some((ref attr, _)) = cred_values.attrs_values
             .iter()
             .find(|&(ref attr, ref value)|
@@ -607,6 +658,7 @@ impl Prover {
             return Err(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in public key", attr)));
         }
 
+        // 公式2.21下半部分
         let rx = cred_values
             .attrs_values
             .iter()
@@ -634,15 +686,17 @@ impl Prover {
                     )
                 },
             )?;
-
+        // 公式2.21
         let q = p_pub_key.z.mod_div(&rx, &p_pub_key.n, Some(&mut ctx))?;
-
+        
+        // 步骤2.4.2
         let expected_q = p_cred_sig.a.mod_exp(&p_cred_sig.e, &p_pub_key.n, Some(&mut ctx))?;
 
         if !q.eq(&expected_q) {
             return Err(IndyCryptoError::InvalidStructure(format!("Invalid Signature correctness proof q != q'")));
         }
 
+        // 公式2.22
         let degree = signature_correctness_proof.c.add(
             &signature_correctness_proof.se.mul(&p_cred_sig.e, Some(&mut ctx))?
         )?;
@@ -655,6 +709,7 @@ impl Prover {
         values.extend_from_slice(&a_cap.to_bytes()?);
         values.extend_from_slice(&nonce.to_bytes()?);
 
+        // 步骤2.4.3
         let c = get_hash_as_int(&vec![values])?;
 
         let valid = signature_correctness_proof.c.eq(&c);
@@ -993,6 +1048,8 @@ impl ProofBuilder {
         Ok(proof)
     }
 
+    /// 检查add_sub_proof_request函数的参数完整性
+    /// 主要是检查凭证是否对应，凭证属性是否存在
     fn _check_add_sub_proof_request_params_consistency(
         cred_values: &CredentialValues,
         sub_proof_request: &SubProofRequest,
@@ -1117,6 +1174,21 @@ impl ProofBuilder {
         Ok(r_init_proof)
     }
 
+    /// 初始化equal部分的证明
+    /// 
+    /// 输入：
+    ///     common_attributes
+    ///     CredentialPrimaryPublicKey
+    ///     PrimaryCredentialSignature
+    ///     CredentialSchema
+    ///     NonCredentialSchema
+    ///     SubProofRequest
+    ///     m2_tilde
+    /// 
+    /// 输出：
+    ///     PrimaryEqualInitProof
+    /// 
+    /// 对应公式4.18-4.19
     fn _init_eq_proof(common_attributes: &HashMap<String, BigNumber>,
                       cred_pub_key: &CredentialPrimaryPublicKey,
                       c1: &PrimaryCredentialSignature,
@@ -1150,6 +1222,7 @@ impl ProofBuilder {
         let mut m_tilde = clone_bignum_map(&common_attributes)?;
         get_mtilde(&unrevealed_attrs, &mut m_tilde)?;
 
+        // 公式4.18
         let a_prime = cred_pub_key.s
             .mod_exp(&r, &cred_pub_key.n, Some(&mut ctx))?
             .mod_mul(&c1.a, &cred_pub_key.n, Some(&mut ctx))?;
@@ -1158,6 +1231,7 @@ impl ProofBuilder {
 
         let v_prime = c1.v.sub(&c1.e.mul(&r, Some(&mut ctx))?)?;
 
+        // 公式4.19
         let t = calc_teq(&cred_pub_key, &a_prime, &e_tilde, &v_tilde, &m_tilde, &m2_tilde, &unrevealed_attrs)?;
 
         let primary_equal_init_proof = PrimaryEqualInitProof {
@@ -1176,7 +1250,19 @@ impl ProofBuilder {
 
         Ok(primary_equal_init_proof)
     }
-
+    
+    /// 初始化inequal部分的证明
+    /// 
+    /// 输入
+    ///     CredentialPrimaryPublicKey
+    ///     m_tilde
+    ///     CredentialValues
+    ///     Predicate
+    /// 
+    /// 输出
+    ///     PrimaryPredicateInequalityInitProof
+    /// 
+    /// 对应论文公式4.20-4.27
     fn _init_ne_proof(p_pub_key: &CredentialPrimaryPublicKey,
                       m_tilde: &HashMap<String, BigNumber>,
                       cred_values: &CredentialValues,
@@ -1193,12 +1279,14 @@ impl ProofBuilder {
             .parse::<i32>()
             .map_err(|_| IndyCryptoError::InvalidStructure(format!("Value by key '{}' has invalid format", predicate.attr_name)))?;
 
+        // 公式4.20
         let delta = predicate.get_delta(attr_value);
 
         if delta < 0 {
             return Err(IndyCryptoError::InvalidStructure("Predicate is not satisfied".to_string()));
         }
 
+        // 公式4.22
         let u = four_squares(delta)?;
 
         let mut r = HashMap::new();
@@ -1210,6 +1298,7 @@ impl ProofBuilder {
                 .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in u1", i)))?;
 
             let cur_r = bn_rand(LARGE_VPRIME)?;
+            // 公式4.23
             let cut_t = get_pedersen_commitment(&p_pub_key.z, &cur_u, &p_pub_key.s,
                                                 &cur_r, &p_pub_key.n, &mut ctx)?;
 
@@ -1220,6 +1309,7 @@ impl ProofBuilder {
 
         let r_delta = bn_rand(LARGE_VPRIME)?;
 
+        // 公式4.24
         let t_delta = get_pedersen_commitment(&p_pub_key.z, &BigNumber::from_dec(&delta.to_string())?,
                                               &p_pub_key.s, &r_delta, &p_pub_key.n, &mut ctx)?;
 
@@ -1241,6 +1331,7 @@ impl ProofBuilder {
         let mj = m_tilde.get(&predicate.attr_name)
             .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in eq_proof.mtilde", predicate.attr_name)))?;
 
+        // 公式4.25-4.27
         let tau_list = calc_tne(&p_pub_key, &u_tilde, &r_tilde, &mj, &alpha_tilde, &t, predicate.is_less())?;
 
         let primary_predicate_ne_init_proof = PrimaryPredicateInequalityInitProof {
@@ -1260,6 +1351,20 @@ impl ProofBuilder {
         Ok(primary_predicate_ne_init_proof)
     }
 
+    /// 实例化equality Proof
+    /// 
+    /// 输入：
+    ///     PrimaryEqualInitProof
+    ///     c_H
+    ///     CredentialSchema
+    ///     NonCredentialSchema
+    ///     CredentialValues
+    ///     SubProofRequest
+    /// 
+    /// 输出：
+    ///     PrimaryEqualProof
+    /// 
+    /// 对应论文4.29-4.31
     fn _finalize_eq_proof(init_proof: &PrimaryEqualInitProof,
                           challenge: &BigNumber,
                           cred_schema: &CredentialSchema,
@@ -1278,10 +1383,11 @@ impl ProofBuilder {
 
         let mut ctx = BigNumber::new_context()?;
 
+        // 公式4.29
         let e = challenge
             .mul(&init_proof.e_prime, Some(&mut ctx))?
             .add(&init_proof.e_tilde)?;
-
+        // 公式4.30
         let v = challenge
             .mul(&init_proof.v_prime, Some(&mut ctx))?
             .add(&init_proof.v_tilde)?;
@@ -1296,7 +1402,7 @@ impl ProofBuilder {
             .difference(&sub_proof_request.revealed_attrs)
             .cloned()
             .collect::<BTreeSet<String>>();
-
+        // 公式4.31
         for k in unrevealed_attrs.iter() {
             let cur_mtilde = init_proof.m_tilde.get(k)
                 .ok_or(IndyCryptoError::InvalidStructure(format!("Value by key '{}' not found in init_proof.mtilde", k)))?;
@@ -1358,9 +1464,11 @@ impl ProofBuilder {
             let cur_rtilde = &init_proof.r_tilde[&i.to_string()];
             let cur_r = &init_proof.r[&i.to_string()];
 
+            // 公式4.32
             let new_u: BigNumber = c_h
                 .mul(&cur_u, Some(&mut ctx))?
                 .add(&cur_utilde)?;
+            // 公式4.33
             let new_r: BigNumber = c_h
                 .mul(&cur_r, Some(&mut ctx))?
                 .add(&cur_rtilde)?;
@@ -1371,9 +1479,9 @@ impl ProofBuilder {
             urproduct = cur_u
                 .mul(&cur_r, Some(&mut ctx))?
                 .add(&urproduct)?;
-
+            // TODO: 移出循环
             let cur_rtilde_delta = &init_proof.r_tilde["DELTA"];
-
+            // 公式4.35
             let new_delta = c_h
                 .mul(&init_proof.r["DELTA"], Some(&mut ctx))?
                 .add(&cur_rtilde_delta)?;
@@ -1400,6 +1508,20 @@ impl ProofBuilder {
         Ok(primary_predicate_ne_proof)
     }
 
+    /// 实例化Primary凭证Proof
+    /// 
+    /// 输入：
+    ///     PrimaryInitProof
+    ///     c_H
+    ///     CredentialSchema
+    ///     NonCredentialSchema
+    ///     CredentialValues
+    ///     SubProofRequest
+    /// 
+    /// 输出：
+    ///     PrimaryProof
+    /// 
+    /// 对应论文步骤4.2.2.2-4.2.2.3
     fn _finalize_primary_proof(init_proof: &PrimaryInitProof,
                                challenge: &BigNumber,
                                cred_schema: &CredentialSchema,
@@ -1997,13 +2119,13 @@ mod tests {
         println!("proof_request_nonce = {:#?}", proof_request_nonce);
         println!("proof = {:#?}", proof);
 
-//        let mut proof_verifier = Verifier::new_proof_verifier().unwrap();
-//        proof_verifier.add_sub_proof_request(&sub_proof_request,
-//                                             &credential_schema,
-//                                             &non_credential_schema,
-//                                             &cred_pub_key,
-//                                             Some(&rev_key_pub),
-//                                             Some(&rev_reg)).unwrap();
+    //        let mut proof_verifier = Verifier::new_proof_verifier().unwrap();
+    //        proof_verifier.add_sub_proof_request(&sub_proof_request,
+    //                                             &credential_schema,
+    //                                             &non_credential_schema,
+    //                                             &cred_pub_key,
+    //                                             Some(&rev_key_pub),
+    //                                             Some(&rev_reg)).unwrap();
     }
 }
 

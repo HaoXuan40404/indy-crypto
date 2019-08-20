@@ -251,7 +251,8 @@ impl ProofVerifier {
 
         Ok(valid)
     }
-
+    
+    /// 检查add_sub_proof_request函数的数据完整性
     fn _check_add_sub_proof_request_params_consistency(sub_proof_request: &SubProofRequest,
                                                        cred_schema: &CredentialSchema) -> Result<(), IndyCryptoError> {
         trace!("ProofVerifier::_check_add_sub_proof_request_params_consistency: >>> sub_proof_request: {:?}, cred_schema: {:?}", sub_proof_request, cred_schema);
@@ -274,6 +275,8 @@ impl ProofVerifier {
         Ok(())
     }
 
+    /// 检查verify函数的数据完整性
+    /// 主要包括验证数据长度、数据逐项对比得出的
     fn _check_verify_params_consistency(credentials: &Vec<VerifiableCredential>,
                                         proof: &Proof) -> Result<(), IndyCryptoError> {
         trace!("ProofVerifier::_check_verify_params_consistency: >>> credentials: {:?}, proof: {:?}", credentials, proof);
@@ -303,7 +306,21 @@ impl ProofVerifier {
 
         Ok(())
     }
-
+    
+    /// 验证Primary凭证的正确性
+    /// 
+    /// 输入：
+    ///     CredentialPrimaryPublicKey
+    ///     c_H
+    ///     PrimaryProof
+    ///     CredentialSchema
+    ///     NonCredentialSchema
+    ///     SubProofRequest
+    /// 
+    /// 输出：
+    ///     tau_list
+    /// 
+    /// 对应论文公式 4.41-4.46
     fn _verify_primary_proof(p_pub_key: &CredentialPrimaryPublicKey,
                              c_hash: &BigNumber,
                              primary_proof: &PrimaryProof,
@@ -315,7 +332,7 @@ impl ProofVerifier {
 
         let mut t_hat: Vec<BigNumber> = ProofVerifier::_verify_equality(p_pub_key,
                                                                         &primary_proof.eq_proof,
-                                                                        c_hash,
+                                                                         c_hash,
                                                                         cred_schema,
                                                                         non_cred_schema,
                                                                         sub_proof_request)?;
@@ -329,6 +346,19 @@ impl ProofVerifier {
         Ok(t_hat)
     }
 
+    /// 验证Prc的正确性
+    /// 
+    /// 输入：
+    ///     CredentialPrimaryPublicKey
+    ///     PrimaryEqualProof
+    ///     CredentialSchema
+    ///     NonCredentialSchema
+    ///     SubProofRequest
+    /// 
+    /// 输出：
+    ///     \hat{T}
+    /// 
+    /// 对应论文公式4.41
     fn _verify_equality(p_pub_key: &CredentialPrimaryPublicKey,
                         proof: &PrimaryEqualProof,
                         c_hash: &BigNumber,
@@ -375,15 +405,29 @@ impl ProofVerifier {
         Ok(vec![t])
     }
 
+    /// 验证Prp的正确性
+    /// 
+    /// 输入：
+    ///     CredentialPrimaryPublicKey
+    ///     PrimaryPredicateInequalityProof
+    ///     c_H    
+    /// 
+    /// 输出：
+    ///     tau_list
+    /// 
+    /// 对应论文4.42-4.46
     fn _verify_ne_predicate(p_pub_key: &CredentialPrimaryPublicKey,
                             proof: &PrimaryPredicateInequalityProof,
                             c_hash: &BigNumber) -> Result<Vec<BigNumber>, IndyCryptoError> {
         trace!("ProofVerifier::_verify_ne_predicate: >>> p_pub_key: {:?}, proof: {:?}, c_hash: {:?}", p_pub_key, proof, c_hash);
 
         let mut ctx = BigNumber::new_context()?;
+
+        // 公式4.44，4.45，4.46的后半段
         let mut tau_list = calc_tne(&p_pub_key, &proof.u, &proof.r, &proof.mj,
                                     &proof.alpha, &proof.t, proof.predicate.is_less())?;
-
+        
+        // 公式4.44前半段*后半段
         for i in 0..ITERATION {
             let cur_t = proof.t.get(&i.to_string())
                 .ok_or(IndyCryptoError::AnoncredsProofRejected(format!("Value by key '{}' not found in proof.t", i)))?;
@@ -403,6 +447,7 @@ impl ProofVerifier {
             delta.clone()?
         };
 
+        // 公式4.45前半段*后半段
         tau_list[ITERATION] = p_pub_key.z
             .mod_exp(&proof.predicate.get_delta_prime()?,
                 &p_pub_key.n, Some(&mut ctx))?
@@ -411,6 +456,7 @@ impl ProofVerifier {
             .inverse(&p_pub_key.n, Some(&mut ctx))?
             .mod_mul(&tau_list[ITERATION], &p_pub_key.n, Some(&mut ctx))?;
 
+        // 公式4.46前半段*后半段
         tau_list[ITERATION + 1] = delta
             .mod_exp(&c_hash, &p_pub_key.n, Some(&mut ctx))?
             .inverse(&p_pub_key.n, Some(&mut ctx))?

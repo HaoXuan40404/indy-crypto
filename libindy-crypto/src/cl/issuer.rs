@@ -572,6 +572,15 @@ impl Issuer {
         Ok(rev_reg_delta)
     }
 
+    /// 生成Primary凭证的公私钥对
+    /// 输入：
+    ///     CredentialSchema                    Credential模板
+    ///     NonCredentialSchema                 NonCredential模板
+    /// 输出：
+    ///     CredentialPrimaryPublicKey          Primary凭证公钥
+    ///     CredentialPrimaryPrivateKey         Primary凭证私钥
+    ///     CredentialPrimaryPublicKeyMetadata  Primary凭证元素
+    /// 对应论文中 1.2.1-1.3.1
     fn _new_credential_primary_keys(credential_schema: &CredentialSchema,
                                     non_credential_schema: &NonCredentialSchema) ->
                                                                           Result<(CredentialPrimaryPublicKey,
@@ -652,6 +661,14 @@ impl Issuer {
         Ok((cred_rev_pub_key, cred_rev_priv_key))
     }
 
+    /// 生成Primary凭证密钥的正确性证明
+    /// 输入：
+    ///     CredentialPrimaryPublicKey          Primary凭证公钥
+    ///     CredentialPrimaryPrivateKey         Primary凭证私钥
+    ///     CredentialPrimaryPublicKeyMetadata  Primary凭证元素
+    /// 输出：
+    ///     CredentialKeyCorrectnessProof       Primary凭证密钥正确性证明
+    /// 对应论文中1.3.1
     fn _new_credential_key_correctness_proof(cred_pr_pub_key: &CredentialPrimaryPublicKey,
                                              cred_pr_priv_key: &CredentialPrimaryPrivateKey,
                                              cred_pr_pub_key_meta: &CredentialPrimaryPublicKeyMetadata) -> Result<CredentialKeyCorrectnessProof, IndyCryptoError> {
@@ -754,6 +771,18 @@ impl Issuer {
         Ok((rev_key_pub, rev_key_priv))
     }
 
+    /// 检查Prover发来的盲化凭证的正确性
+    /// 
+    /// 输入：
+    ///     BlindedCredentialSecrets
+    ///     BlindedCredentialSecretsCorrectnessProof
+    ///     nonce
+    ///     CredentialPrimaryPublicKey
+    /// 
+    /// 输出：
+    ///     若错误则报错
+    /// 
+    /// 对应论文中步骤2.3.1
     fn _check_blinded_credential_secrets_correctness_proof(blinded_cred_secrets: &BlindedCredentialSecrets,
                                                            blinded_cred_secrets_correctness_proof: &BlindedCredentialSecretsCorrectnessProof,
                                                            nonce: &Nonce,
@@ -763,7 +792,7 @@ impl Issuer {
 
         let mut values: Vec<u8> = Vec::new();
         let mut ctx = BigNumber::new_context()?;
-
+        // 论文2.3.1步骤
         let u_cap = blinded_cred_secrets.hidden_attributes
                                         .iter()
                                         .fold(blinded_cred_secrets.u
@@ -834,6 +863,20 @@ impl Issuer {
         Ok(credential_context)
     }
 
+    /// 生成新的Primary凭证
+    /// 
+    /// 输入：
+    ///     m2
+    ///     CredentialPublicKey
+    ///     CredentialPrivateKey
+    ///     BlindedCredentialSecrets
+    ///     CredentialValues
+    /// 
+    /// 输出：
+    ///     PrimaryCredentialSignature
+    ///     BigNumber: Q
+    /// 
+    /// 对应论文公式
     fn _new_primary_credential(credential_context: &BigNumber,
                                cred_pub_key: &CredentialPublicKey,
                                cred_priv_key: &CredentialPrivateKey,
@@ -854,6 +897,22 @@ impl Issuer {
         Ok((pr_cred_sig, q))
     }
 
+    /// Issuer签发凭证
+    /// 
+    /// 输入：
+    ///     CredentialPublicKey
+    ///     CredentialPrivateKey
+    ///     m2
+    ///     CredentialValues
+    ///     v''
+    ///     BlindedCredentialSecrets
+    ///     e
+    /// 
+    /// 输出：
+    ///     A
+    ///     Q
+    /// 
+    /// 对应论文公式2.9、2.10
     fn _sign_primary_credential(cred_pub_key: &CredentialPublicKey,
                                 cred_priv_key: &CredentialPrivateKey,
                                 cred_context: &BigNumber,
@@ -876,7 +935,7 @@ impl Issuer {
         let mut context = BigNumber::new_context()?;
 
         let mut rx = p_pub_key.s.mod_exp(&v, &p_pub_key.n, Some(&mut context))?;
-
+        // 公式2.9
         if blinded_cred_secrets.u != BigNumber::from_u32(0)? {
             rx = rx.mod_mul(&blinded_cred_secrets.u, &p_pub_key.n, Some(&mut context))?;
         }
@@ -896,7 +955,7 @@ impl Issuer {
 
         let n = p_priv_key.p.mul(&p_priv_key.q, Some(&mut context))?;
         let e_inverse = e.inverse(&n, Some(&mut context))?;
-
+        // 公式2.10
         let a = q.mod_exp(&e_inverse, &p_pub_key.n, Some(&mut context))?;
 
         trace!("Issuer::_sign_primary_credential: <<< a: {:?}, q: {:?}", secret!(&a), secret!(&q));
@@ -904,6 +963,20 @@ impl Issuer {
         Ok((a, q))
     }
 
+    /// 生成签名的正确性证明
+    /// 
+    /// 输入：
+    ///     CredentialPrimaryPublicKey
+    ///     CredentialPrimaryPrivateKey
+    ///     PrimaryCredentialSignature
+    ///     Q
+    ///     n1
+    /// 
+    /// 输出：
+    ///     SignatureCorrectnessProof
+    /// 
+    /// 对应论文公式2.11、2.12、2.13
+    /// 
     fn _new_signature_correctness_proof(p_pub_key: &CredentialPrimaryPublicKey,
                                         p_priv_key: &CredentialPrimaryPrivateKey,
                                         p_cred_signature: &PrimaryCredentialSignature,
@@ -917,6 +990,7 @@ impl Issuer {
         let n = p_priv_key.p.mul(&p_priv_key.q, Some(&mut ctx))?;
         let r = bn_rand_range(&n)?;
 
+        // 公式2.11
         let a_cap = q.mod_exp(&r, &p_pub_key.n, Some(&mut ctx))?;
 
         let mut values: Vec<u8> = Vec::new();
@@ -925,8 +999,9 @@ impl Issuer {
         values.extend_from_slice(&a_cap.to_bytes()?);
         values.extend_from_slice(&nonce.to_bytes()?);
 
+        // 公式2.12
         let c = get_hash_as_int(&mut vec![values])?;
-
+        // 公式2.13
         let se = r.mod_sub(
             &c.mod_mul(&p_cred_signature.e.inverse(&n, Some(&mut ctx))?, &n, Some(&mut ctx))?,
             &n,
@@ -1177,7 +1252,7 @@ mod tests {
     #[test]
     #[ignore]
     fn generate_mocks() {
-//        MockHelper::inject();
+    //        MockHelper::inject();
 
         let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
         credential_schema_builder.add_attr("name").unwrap();

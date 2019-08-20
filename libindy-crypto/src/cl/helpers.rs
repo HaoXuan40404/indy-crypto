@@ -40,6 +40,7 @@ impl MockHelper {
     }
 }
 
+// 生成一个big number
 #[cfg(test)]
 pub fn bn_rand(size: usize) -> Result<BigNumber, IndyCryptoError> {
     if MockHelper::is_injected() {
@@ -79,6 +80,7 @@ pub fn _bn_rand(size: usize) -> Result<BigNumber, IndyCryptoError> {
     Ok(res)
 }
 
+// 在范围内随机生成一个big number
 #[cfg(test)]
 pub fn bn_rand_range(_bn: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     BigNumber::from_dec("6355086599653879826316700099928903465759924565682653297540990486160410136991969646604012568191576052570982028627086748382054319397088948628665022843282950799083156383516421449932691541760677147872377591267323656783938723945915297920233965100454678367417561768144216659060966399182536425206811620699453941460281449071103436526749575365638254352831881150836568830779323361579590121888491911166612382507532248659384681554612887580241255323056245170208421770819447066550669981130450421507202133758209950007973511221223647764045990479619451838104977691662868482078262695232806059726002249095643117917855811948311863670130")
@@ -99,6 +101,8 @@ pub fn _bn_rand_range(bn: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     Ok(res)
 }
 
+
+// 使用sha256哈希，使得原文编码化
 pub fn encode_attribute(attribute: &str, byte_order: ByteOrder) -> Result<BigNumber, IndyCryptoError> {
     trace!("Helpers::encode_attribute: >>> attribute: {:?}, byte_order: {:?}", attribute, byte_order);
     let mut result = BigNumber::hash(attribute.as_bytes())?;
@@ -114,6 +118,7 @@ pub fn encode_attribute(attribute: &str, byte_order: ByteOrder) -> Result<BigNum
     Ok(encoded_attribute)
 }
 
+// 生成2724-bit v''
 #[cfg(test)]
 pub fn generate_v_prime_prime() -> Result<BigNumber, IndyCryptoError> {
     if MockHelper::is_injected() {
@@ -139,6 +144,7 @@ pub fn _generate_v_prime_prime() -> Result<BigNumber, IndyCryptoError> {
     Ok(v_prime_prime)
 }
 
+// 在范围内生成一个素数
 #[cfg(test)]
 pub fn generate_prime_in_range(start: &BigNumber, end: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     if MockHelper::is_injected() {
@@ -175,6 +181,7 @@ pub fn generate_safe_prime(size: usize) -> Result<BigNumber, IndyCryptoError> {
     _generate_safe_prime(size)
 }
 
+// 生成safe素数
 #[cfg(not(test))]
 pub fn generate_safe_prime(size: usize) -> Result<BigNumber, IndyCryptoError> {
     _generate_safe_prime(size)
@@ -190,6 +197,7 @@ pub fn _generate_safe_prime(size: usize) -> Result<BigNumber, IndyCryptoError> {
     Ok(safe_prime)
 }
 
+// 在 [2, p'q'-1] 的范围内随机生成一个数
 #[cfg(test)]
 pub fn gen_x(p: &BigNumber, q: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     if MockHelper::is_injected() {
@@ -218,6 +226,7 @@ pub fn _gen_x(p: &BigNumber, q: &BigNumber) -> Result<BigNumber, IndyCryptoError
     Ok(x)
 }
 
+// 随机生成一个qr TODO:
 #[cfg(test)]
 pub fn random_qr(n: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     if MockHelper::is_injected() {
@@ -241,7 +250,7 @@ pub fn _random_qr(n: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     Ok(qr)
 }
 
-
+// 生成一个2724bit数，第一位一定是1，主要用作生成v''
 //TODO: FIXME very inefficient code
 pub fn bitwise_or_big_int(a: &BigNumber, b: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     trace!("Helpers::bitwise_or_big_int: >>> a: {:?}, b: {:?}", a, b);
@@ -273,6 +282,7 @@ pub fn transform_u32_to_array_of_u8(x: u32) -> Vec<u8> {
     result
 }
 
+// 生成 \tilde{m_i} ，在翻译论文4.2节，目的是生成unrevealed属性盲化参数 
 pub fn get_mtilde(unrevealed_attrs: &HashSet<String>, mtilde: &mut HashMap<String, BigNumber>) -> Result<(), IndyCryptoError> {
     trace!("Helpers::get_mtilde: >>> unrevealed_attrs: {:?}", unrevealed_attrs);
 
@@ -287,6 +297,33 @@ pub fn get_mtilde(unrevealed_attrs: &HashSet<String>, mtilde: &mut HashMap<Strin
     Ok(())
 }
 
+/// Prover和Verifier都使用这个函数，生成Tau集合中 T 的基本数值模板。
+    /// 
+    /// Prover调用时：
+    /// 
+    /// 输入：
+    /// - 凭证公钥
+    /// - A'
+    /// - $\tilde e$
+    /// - $\tilde{m_j}: HashMap<string, BigNumber>$
+    /// - $\tilde{m_2}$
+    /// - unrevealed_attrs: HashSet<string>
+    ///
+    /// 输出：
+    /// T: BigNum
+    /// 
+    /// Verifier调用时：
+    /// 
+    /// 输入：
+    /// - 凭证公钥
+    /// - A'
+    /// - $\hat e$
+    /// - $\hat{m_j}: HashMap<string, BigNumber>$
+    /// - $\hat{m_2}$
+    /// - unrevealed_attrs: HashSet<string>
+    /// 
+    /// 输出：
+    /// \hat{T}: BigNum
 pub fn calc_teq(p_pub_key: &CredentialPrimaryPublicKey,
                 a_prime: &BigNumber,
                 e: &BigNumber,
@@ -325,6 +362,9 @@ pub fn calc_teq(p_pub_key: &CredentialPrimaryPublicKey,
     Ok(result)
 }
 
+/// Prover和Verifier都调用这个函数，生成Tau集合中 T_i, T_\Delta, Q
+    /// 
+    ///  
 pub fn calc_tne(p_pub_key: &CredentialPrimaryPublicKey,
                 u: &HashMap<String, BigNumber>,
                 r: &HashMap<String, BigNumber>,
@@ -398,6 +438,7 @@ fn largest_square_less_than(delta: usize) -> usize {
     (delta as f64).sqrt().floor() as usize
 }
 
+// 找出四个 u_i
 //Express the natural number `delta` as a sum of four integer squares,
 // i.e `delta = a^2 + b^2 + c^2 + d^2` using Lagrange's four-square theorem
 pub fn four_squares(delta: i32) -> Result<HashMap<String, BigNumber>, IndyCryptoError> {
@@ -461,6 +502,8 @@ pub fn bignum_to_group_element(num: &BigNumber) -> Result<GroupOrderElement, Ind
     Ok(GroupOrderElement::from_bytes(&num.to_bytes()?)?)
 }
 
+/// Verifier调用，先用 create_tau_list_values 函数得出模板值tau_list，再调用该函数得出最终验证值
+/// 用于验证 撤销
 pub fn create_tau_list_expected_values(r_pub_key: &CredentialRevocationPublicKey,
                                        rev_reg: &RevocationRegistry,
                                        rev_acc_pub_key: &RevocationKeyPublic,
@@ -497,6 +540,7 @@ pub fn create_tau_list_expected_values(r_pub_key: &CredentialRevocationPublicKey
     Ok(non_revoc_proof_tau_list)
 }
 
+/// Prover和Verifier都调用该模板函数，得出模板值 tau_list
 pub fn create_tau_list_values(r_pub_key: &CredentialRevocationPublicKey,
                               rev_reg: &RevocationRegistry,
                               params: &NonRevocProofXList,
