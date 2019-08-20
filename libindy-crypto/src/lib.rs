@@ -1,8 +1,3 @@
-#[cfg(feature = "wasm")]
-extern crate wasm_bindgen;
-#[cfg(feature = "wasm")]
-extern crate console_error_panic_hook;
-
 #[cfg(feature = "pair_amcl")]
 extern crate amcl;
 extern crate env_logger;
@@ -43,7 +38,6 @@ extern crate time;
 #[cfg(feature = "cl")]
 #[macro_use]
 pub mod cl;
-pub mod bls;
 
 #[cfg(feature = "bn_openssl")]
 #[path = "bn/openssl.rs"]
@@ -59,6 +53,3 @@ pub mod pair;
 
 #[macro_use]
 extern crate lazy_static;
-
-#[cfg(feature = "wasm")]
-pub mod wasm;
