@@ -100,23 +100,6 @@ pub fn _bn_rand_range(bn: &BigNumber) -> Result<BigNumber, IndyCryptoError> {
     Ok(res)
 }
 
-
-// 使用sha256哈希，使得原文编码化
-pub fn encode_attribute(attribute: &str, byte_order: ByteOrder) -> Result<BigNumber, IndyCryptoError> {
-    trace!("Helpers::encode_attribute: >>> attribute: {:?}, byte_order: {:?}", attribute, byte_order);
-    let mut result = BigNumber::hash(attribute.as_bytes())?;
-
-    if let ByteOrder::Little = byte_order {
-        result.reverse();
-    }
-
-    let encoded_attribute = BigNumber::from_bytes(&result)?;
-
-    trace!("Helpers::encode_attribute: <<< encoded_attribute: {:?}", encoded_attribute);
-
-    Ok(encoded_attribute)
-}
-
 // 生成2724-bit v''
 #[cfg(test)]
 pub fn generate_v_prime_prime() -> Result<BigNumber, IndyCryptoError> {
@@ -480,13 +463,6 @@ mod tests {
     use cl::{issuer, prover};
 
     #[test]
-    fn encode_attribute_works() {
-        let test_str = "5435";
-        let test_answer = "83761840706354868391674207739241454863743470852830526299004654280720761327142";
-        assert_eq!(test_answer, encode_attribute(test_str, ByteOrder::Big).unwrap().to_dec().unwrap());
-    }
-
-    #[test]
     fn generate_v_prime_prime_works() {
         MockHelper::inject();
 
@@ -538,28 +514,6 @@ mod tests {
         assert_eq!("11".to_string(), res_data.get("3").unwrap().to_dec().unwrap());
     }
 
-    #[test]
-    fn test_encode_attribute_fail_simple_collision_on_internal_truncate() {
-        let ea3079 = encode_attribute("3079", ByteOrder::Big).unwrap();
-        let ea6440 = encode_attribute("6440", ByteOrder::Big).unwrap();
-        assert_ne!(ea3079, ea6440);
-
-        /* Collision generator
-        let mut arr: [i32; 256] = [0; 256];
-        let i: usize = 0;
-        loop {
-            let v = BigNumber::hash(i.to_string().as_bytes()).unwrap();
-            if v[1] == 0 {
-                let v0 = v[0] as usize;
-                if v0 != 0 && arr[v0] != 0 {
-                    println!("{} {}", arr[v0], i);
-                    return;
-                }
-                arr[v0] = i;
-            }
-        }
-        */
-    }
 
     #[test]
     fn calc_tne_works() {
