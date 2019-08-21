@@ -16,6 +16,171 @@ mod test {
     use indy_crypto::errors::ToErrorCode;
 
     #[test]
+    fn anoncreds_demo() {
+        IndyCryptoDefaultLogger::init(None).ok();
+
+        // 1. Prover creates master secret
+        let master_secret = Prover::new_master_secret().unwrap();
+
+        // Issuer creates GVT credential
+        // 2. Issuer creates GVT credential schema
+        let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
+        credential_schema_builder.add_attr("name").unwrap();
+        credential_schema_builder.add_attr("sex").unwrap();
+        credential_schema_builder.add_attr("age").unwrap();
+        credential_schema_builder.add_attr("height").unwrap();
+        let gvt_credential_schema = credential_schema_builder.finalize().unwrap();
+
+        let mut non_credential_schema_builder = Issuer::new_non_credential_schema_builder().unwrap();
+        non_credential_schema_builder.add_attr("master_secret").unwrap();
+        let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
+
+        // 3. Issuer creates GVT credential definition
+        let (gvt_credential_pub_key, gvt_credential_priv_key, gvt_credential_key_correctness_proof) =
+            Issuer::new_credential_def(&gvt_credential_schema, &non_credential_schema).unwrap();
+
+        // 4. Issuer creates nonce used Prover to blind master secret
+        let gvt_credential_nonce = new_nonce().unwrap();
+
+        // 5. Issuer creates GVT credential values
+        let mut credential_values_builder = Issuer::new_credential_values_builder().unwrap();
+        credential_values_builder.add_value_hidden("master_secret", &master_secret.value().unwrap()).unwrap();
+        credential_values_builder.add_dec_known("name", "1139481716457488690172217916278103335").unwrap();
+        credential_values_builder.add_dec_known("sex", "5944657099558967239210949258394887428692050081607692519917050011144233115103").unwrap();
+        credential_values_builder.add_dec_known("age", "28").unwrap();
+        credential_values_builder.add_dec_known("height", "175").unwrap();
+        let gvt_credential_values = credential_values_builder.finalize().unwrap();
+
+        // 6. Prover blinds hidden attributes
+        let (gvt_blinded_credential_secrets, gvt_credential_secrets_blinding_factors, gvt_blinded_credential_secrets_correctness_proof) =
+            Prover::blind_credential_secrets(&gvt_credential_pub_key,
+                                             &gvt_credential_key_correctness_proof,
+                                             &gvt_credential_values,
+                                             &gvt_credential_nonce).unwrap();
+
+        // 7. Prover creates nonce used Issuer to credential issue
+        let gvt_credential_issuance_nonce = new_nonce().unwrap();
+
+        // 8. Issuer signs GVT credential values
+        let (mut gvt_credential_signature, gvt_signature_correctness_proof) =
+            Issuer::sign_credential(PROVER_ID,
+                                               &gvt_blinded_credential_secrets,
+                                               &gvt_blinded_credential_secrets_correctness_proof,
+                                               &gvt_credential_nonce,
+                                               &gvt_credential_issuance_nonce,
+                                               &gvt_credential_values,
+                                               &gvt_credential_pub_key,
+                                               &gvt_credential_priv_key).unwrap();
+
+        // 9. Prover processes GVT credential signature
+        Prover::process_credential_signature(&mut gvt_credential_signature,
+                                             &gvt_credential_values,
+                                             &gvt_signature_correctness_proof,
+                                             &gvt_credential_secrets_blinding_factors,
+                                             &gvt_credential_pub_key,
+                                             &gvt_credential_issuance_nonce).unwrap();
+
+        // Issuer creates XYZ credential
+        // 10. Issuer creates XYZ credential schema
+        let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
+        credential_schema_builder.add_attr("period").unwrap();
+        credential_schema_builder.add_attr("status").unwrap();
+        let xyz_credential_schema = credential_schema_builder.finalize().unwrap();
+
+        // 11. Issuer creates XYZ credential definition (with revocation keys)
+        let (xyz_credential_pub_key, xyz_credential_priv_key, xyz_credential_key_correctness_proof) =
+            Issuer::new_credential_def(&xyz_credential_schema, &non_credential_schema).unwrap();
+
+        // 12. Issuer creates nonce used Prover to blind master secret
+        let xyz_credential_nonce = new_nonce().unwrap();
+
+        // 13. Issuer creates XYZ credential values
+        let mut credential_values_builder = Issuer::new_credential_values_builder().unwrap();
+        credential_values_builder.add_value_hidden("master_secret", &master_secret.value().unwrap()).unwrap();
+        credential_values_builder.add_dec_known("status", "51792877103171595686471452153480627530895").unwrap();
+        credential_values_builder.add_dec_known("period", "8").unwrap();
+        let xyz_credential_values = credential_values_builder.finalize().unwrap();
+
+        // 14. Prover blinds hidden attributes
+        let (xyz_blinded_credential_secrets, xyz_credential_secrets_blinding_factors, xyz_blinded_credential_secrets_correctness_proof) =
+            Prover::blind_credential_secrets(&xyz_credential_pub_key,
+                                             &xyz_credential_key_correctness_proof,
+                                             &xyz_credential_values,
+                                             &xyz_credential_nonce).unwrap();
+
+        // 15. Prover creates nonce used Issuer to credential issue
+        let xyz_credential_issuance_nonce = new_nonce().unwrap();
+
+        // 16. Issuer signs XYZ credential values
+        let (mut xyz_credential_signature, xyz_signature_correctness_proof) =
+            Issuer::sign_credential(PROVER_ID,
+                                               &xyz_blinded_credential_secrets,
+                                               &xyz_blinded_credential_secrets_correctness_proof,
+                                               &xyz_credential_nonce,
+                                               &xyz_credential_issuance_nonce,
+                                               &xyz_credential_values,
+                                               &xyz_credential_pub_key,
+                                               &xyz_credential_priv_key).unwrap();
+
+        // 17. Prover processes XYZ credential signature
+        Prover::process_credential_signature(&mut xyz_credential_signature,
+                                             &xyz_credential_values,
+                                             &xyz_signature_correctness_proof,
+                                             &xyz_credential_secrets_blinding_factors,
+                                             &xyz_credential_pub_key,
+                                             &xyz_credential_issuance_nonce).unwrap();
+
+        // 18. Verifier creates sub proof request related to GVT credential
+        let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
+        sub_proof_request_builder.add_revealed_attr("name").unwrap();
+        sub_proof_request_builder.add_predicate("age", "GE", 18).unwrap();
+        let gvt_sub_proof_request = sub_proof_request_builder.finalize().unwrap();
+
+        // 19. Verifier creates sub proof request related to XYZ credential
+        let mut sub_proof_request_builder = Verifier::new_sub_proof_request_builder().unwrap();
+        sub_proof_request_builder.add_revealed_attr("status").unwrap();
+        sub_proof_request_builder.add_predicate("period", "GE", 4).unwrap();
+        let xyz_sub_proof_request = sub_proof_request_builder.finalize().unwrap();
+
+        // 20. Verifier creates nonce
+        let nonce = new_nonce().unwrap();
+
+        // 21. Prover creates proof for two sub proof requests
+        let mut proof_builder = Prover::new_proof_builder().unwrap();
+
+        proof_builder.add_common_attribute("master_secret").unwrap();
+        proof_builder.add_sub_proof_request(&gvt_sub_proof_request,
+                                            &gvt_credential_schema,
+                                            &non_credential_schema,
+                                            &gvt_credential_signature,
+                                            &gvt_credential_values,
+                                            &gvt_credential_pub_key).unwrap();
+
+        proof_builder.add_sub_proof_request(&xyz_sub_proof_request,
+                                            &xyz_credential_schema,
+                                            &non_credential_schema,
+                                            &xyz_credential_signature,
+                                            &xyz_credential_values,
+                                            &xyz_credential_pub_key).unwrap();
+
+        let proof = proof_builder.finalize(&nonce).unwrap();
+
+        // 22. Verifier verifies proof
+        let mut proof_verifier = Verifier::new_proof_verifier().unwrap();
+        proof_verifier.add_sub_proof_request(&gvt_sub_proof_request,
+                                             &gvt_credential_schema,
+                                             &non_credential_schema,
+                                             &gvt_credential_pub_key).unwrap();
+
+        proof_verifier.add_sub_proof_request(&xyz_sub_proof_request,
+                                             &xyz_credential_schema,
+                                             &non_credential_schema,
+                                             &xyz_credential_pub_key).unwrap();
+
+        assert!(proof_verifier.verify(&proof, &nonce).unwrap());
+    }
+
+    #[test]
     fn anoncreds_works_for_primary_proof_only() {
         IndyCryptoDefaultLogger::init(None).ok();
 
