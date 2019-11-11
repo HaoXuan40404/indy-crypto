@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet, BTreeSet, BTreeMap};
 use std::hash::Hash;
 use colored::*;
 use std::io;
+extern crate bincode;
 
 /// Creates random nonce
 ///
@@ -1193,7 +1194,8 @@ mod test {
     use self::issuer::Issuer;
     use self::prover::Prover;
     use self::verifier::Verifier;
-    
+    use serde::{Serialize, Deserialize};
+
     #[test]
     fn multiple_predicates() {
         let mut credential_schema_builder = Issuer::new_credential_schema_builder().unwrap();
@@ -1573,11 +1575,13 @@ mod test {
         let credential_schema = credential_schema_builder.finalize().unwrap();
         print!("{}", "公开信息属性模板credential_schema = ".yellow());
         println!("{:?}", credential_schema);
+
         pause();
 
         println!("{}", "Issuer生成隐私信息属性模板".green());
         println!("{}", "隐私信息属性模板包含用户master_secret key".green());
         println!("{}", "信息信息模板中填写的信息对Issuer和Verifier不可见".red());
+
         let mut non_credential_schema_builder = NonCredentialSchemaBuilder::new().unwrap();
         non_credential_schema_builder.add_attr("master_secret").unwrap();
         let non_credential_schema = non_credential_schema_builder.finalize().unwrap();
@@ -1596,6 +1600,16 @@ mod test {
         println!("{:?}", cred_key_correctness_proof);
         println!("{}", "Issuer将公钥cred_pub_key，证明cred_key_correctness_proof，属性凭证模板公开".green());
         pause();
+
+//        let test = cred_key_correctness_proof.serialize(String).unwrap();
+    let test = bincode::serialize(&cred_key_correctness_proof).unwrap();
+    let test_get:CredentialKeyCorrectnessProof = bincode::deserialize(&test).unwrap();
+//    let test = serde_json::to_string(&cred_key_correctness_proof).unwrap();
+//    let test_bytes = test.as_bytes();
+    println!("!!!!!!!!!test = {:?}",test);
+    println!("!!!!!!!!!test = {:?}",test_get);
+//        let test_get = CredentialKeyCorrectnessProof::deserialize(test_bytes).unwrap();
+//    println!("!!!!!!!!!test_get = {:?}",test_get);
 
         println!("{}", "Prover(Holder, User)根据模板填写自己的信息".green());
         // println!("{}", "Prover(Holder, User)生成master_secret".green());
