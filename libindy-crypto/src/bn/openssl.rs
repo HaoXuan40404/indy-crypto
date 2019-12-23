@@ -492,9 +492,12 @@ mod tests {
     use super::*;
 
     use serde_json;
+    use bincode;
 
     const RANGE_LEFT: usize = 592;
     const RANGE_RIGHT: usize = 592;
+
+
 
     #[test]
     #[ignore] //TODO check
@@ -601,6 +604,16 @@ mod tests {
     #[derive(Serialize, Deserialize)]
     struct Test {
         field: BigNumber
+    }
+
+    #[cfg(feature = "serialization")]
+    #[test]
+    fn test_bincode() {
+        let s = Test { field: BigNumber::from_dec("1").unwrap() };
+        let serialized = bincode::serialize(&s);
+
+        assert!(serialized.is_ok());
+        assert_eq!("{\"field\":\"1\"}", serialized.unwrap());
     }
 
     #[cfg(feature = "serialization")]
