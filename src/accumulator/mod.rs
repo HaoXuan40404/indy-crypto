@@ -692,12 +692,283 @@ mod test {
     }
 
     #[test]
+    fn demo_10000_witness() {
+        extern crate chrono;
+//        use chrono::prelude::*;
+        let time1 = format!("{}", chrono::Utc::now().timestamp_millis());
+        println!("time: {}", time1);
+        let max_element_num = 1;
+        let (credential_revocation_public_key, credential_revocation_private_key) =
+        Issuer::new_revocation_keys().unwrap();
+        let (mut accumulator_pub, accumulator_pri_key) = Issuer::new_accumulator(&credential_revocation_public_key, max_element_num).unwrap();
+        let mut rev_tails_generator = RevocationTailsGenerator::new(
+            max_element_num,
+            accumulator_pri_key.gamma.clone(),
+            credential_revocation_public_key.g_dash.clone());
+        let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
+        let mut non_revocation_credential_signatures = Vec::new();
+        let mut revocation_registry_deltas = Vec::new();
+        let mut vector_witness = Vec::new();
+//        let mut blinded_revocation_secrets_vec =Vec::new();
+        for i in 0..max_element_num as usize {
+            let blinded_revocation_secrets = Prover::generate_blinded_revocation(&credential_revocation_public_key).unwrap();
+            let prover_id = format!("CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFV{:?}",i);
+            let m2 = Issuer::gen_credential_context(&prover_id, Some(i as u32)).unwrap();
+//            blinded_revocation_secrets_vec.push(blinded_revocation_secrets);
+            let (mut non_revocation_credential_signature1, revocation_registry_delta1) =
+                Issuer::add_to_accumulaor(i as u32, &m2, max_element_num, &blinded_revocation_secrets, &mut accumulator_pub,
+                                          &accumulator_pri_key, &credential_revocation_public_key, &credential_revocation_private_key, &simple_tail_accessor).unwrap();
+            let revocation_registry_delta1 = revocation_registry_delta1.unwrap();
+            let mut witness1 = Witness::new(i as u32, max_element_num, &revocation_registry_delta1, &simple_tail_accessor).unwrap();
+            Prover::check_revocation_credential(&mut non_revocation_credential_signature1,
+                                                &blinded_revocation_secrets, &credential_revocation_public_key, &accumulator_pub, &witness1);
+            vector_witness.push(witness1);
+            Prover::store_non_revocation_credential(&mut non_revocation_credential_signature1, &blinded_revocation_secrets);
+            non_revocation_credential_signatures.push(non_revocation_credential_signature1);
+            revocation_registry_deltas.push(revocation_registry_delta1);
+        }
+        for i in 0..max_element_num as usize {
+            for j in 0..max_element_num as usize {
+                if i==j {
+                    continue;
+                }
+                vector_witness[i].update(i as u32, max_element_num, &revocation_registry_deltas[j], &simple_tail_accessor).unwrap();
+            }
+        }
+        let time2 = format!("{}", chrono::Utc::now().timestamp_millis());
+        println!("time: {}", time2);
+
+        let time1_int: i32 = time1.parse().unwrap();
+        let time2_int: i32 = time2.parse().unwrap();
+        println!("init time = {}ms", time2_int - time1_int);
+        let non_revoc_init_proof1 = Prover::init_non_revocation_proof(&non_revocation_credential_signatures[0],
+                                                                      &accumulator_pub, &credential_revocation_public_key, &vector_witness[0]).unwrap();
+        let proof_request_nonce1 = new_nonce().unwrap();
+        let mut values: Vec<Vec<u8>> = Vec::new();
+        values.extend_from_slice(&non_revoc_init_proof1.as_tau_list().unwrap());
+        values.extend_from_slice(&non_revoc_init_proof1.as_c_list().unwrap());
+        values.push(proof_request_nonce1.to_bytes().unwrap());
+        // In the anoncreds whitepaper, `challenge2` is denoted by `c_h`
+        let challenge1 = get_hash_as_int(&values).unwrap();
+        let non_revoc_proof1 = Prover::finalize_non_revocation_proof(&non_revoc_init_proof1, &challenge1).unwrap();
+        let time1 = format!("{}", chrono::Utc::now().timestamp_millis());
+
+        let result = Verifier::verify(challenge1, &credential_revocation_public_key, &accumulator_pub, &non_revoc_proof1, &proof_request_nonce1).unwrap();
+        assert_eq!(result, true);
+        let time2 = format!("{}", chrono::Utc::now().timestamp_millis());
+        let time1_int: i32 = time1.parse().unwrap();
+        let time2_int: i32 = time2.parse().unwrap();
+        println!("verify time = {}ms", time2_int - time1_int);
+
+    }
+
+    #[test]
+    fn demo_time_accumulator() {
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let max_element_num = 100;
+        let (credential_revocation_public_key, credential_revocation_private_key) =
+            Issuer::new_revocation_keys().unwrap();
+        let (mut accumulator_pub, accumulator_pri_key) = Issuer::new_accumulator(&credential_revocation_public_key, max_element_num).unwrap();
+
+        let mut rev_tails_generator = RevocationTailsGenerator::new(
+            max_element_num,
+            accumulator_pri_key.gamma.clone(),
+            credential_revocation_public_key.g_dash.clone());
+        let simple_tail_accessor = SimpleTailsAccessor::new(&mut rev_tails_generator).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("Issuer初始化公私钥对时间{}ms", time_end - time_start);
+
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let blinded_revocation_secrets = Prover::generate_blinded_revocation(&credential_revocation_public_key).unwrap();
+
+        let prover_id = "CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW";
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("Prover选择自身DID和盲化因子blinded_revocation_secrets时间{}ms", time_end - time_start);
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+
+        // In the anoncreds whitepaper, `credential context` is denoted by `m2`
+        let revocation_id1 = 1;
+        let m2 = Issuer::gen_credential_context(prover_id, Some(revocation_id1)).unwrap();
+
+
+        let (mut non_revocation_credential_signature1, revocation_registry_delta1) =
+            Issuer::add_to_accumulaor(revocation_id1, &m2, max_element_num, &blinded_revocation_secrets, &mut accumulator_pub,
+                                      &accumulator_pri_key, &credential_revocation_public_key, &credential_revocation_private_key, &simple_tail_accessor).unwrap();
+
+        let revocation_registry_delta1 = &revocation_registry_delta1.unwrap();
+        let mut witness1 = Witness::new(revocation_id1, max_element_num, revocation_registry_delta1, &simple_tail_accessor).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("issuer生成未撤销证据的证明时间{}ms", time_end - time_start);
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        Prover::check_revocation_credential(&mut non_revocation_credential_signature1,
+                                            &blinded_revocation_secrets, &credential_revocation_public_key, &accumulator_pub, &witness1);
+        Prover::store_non_revocation_credential(&mut non_revocation_credential_signature1, &blinded_revocation_secrets);
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("Prover对证书和证明验证，对随机数进行偏移并存储时间{}ms", time_end - time_start);
+        //let mut proof_builder = Prover::new_proof_builder().unwrap();
+
+        let proof_request_nonce = new_nonce().unwrap();
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let non_revoc_init_proof = Prover::init_non_revocation_proof(&non_revocation_credential_signature1, &accumulator_pub, &credential_revocation_public_key, &witness1).unwrap();
+        let mut values: Vec<Vec<u8>> = Vec::new();
+        values.extend_from_slice(&non_revoc_init_proof.as_tau_list().unwrap());
+        values.extend_from_slice(&non_revoc_init_proof.as_c_list().unwrap());
+        values.push(proof_request_nonce.to_bytes().unwrap());
+        // In the anoncreds whitepaper, `challenge2` is denoted by `c_h`
+        let challenge = get_hash_as_int(&values).unwrap();
+        let non_revoc_proof = Prover::finalize_non_revocation_proof(&non_revoc_init_proof, &challenge).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("Prover生成未撤销证明时间{}ms", time_end - time_start);
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let result = Verifier::verify(challenge, &credential_revocation_public_key, &accumulator_pub, &non_revoc_proof, &proof_request_nonce).unwrap();
+        assert_eq!(result, true);
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("Verifier验证未撤销证明时间{}ms", time_end - time_start);
+
+
+
+        //=======================================================================================//
+        //=======================================第二个人的=======================================//
+        //=======================================================================================//
+        let blinded_revocation_secrets = Prover::generate_blinded_revocation(&credential_revocation_public_key).unwrap();
+
+        let prover_id = "CnEDk9HrMnmiHXEV1WFgbVCRteYnPqsJwrTdcZaNhFVW";
+
+        let revocation_id2 = 2;
+        let m2 = Issuer::gen_credential_context(prover_id, Some(revocation_id2)).unwrap();
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let (mut non_revocation_credential_signature2, revocation_registry_delta2) =
+            Issuer::add_to_accumulaor(revocation_id2, &m2, max_element_num, &blinded_revocation_secrets, &mut accumulator_pub,
+                                      &accumulator_pri_key, &credential_revocation_public_key, &credential_revocation_private_key, &simple_tail_accessor).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("issuer更新聚合值时间{}ms", time_end - time_start);
+
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let revocation_registry_delta2 = &revocation_registry_delta2.unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("更新未撤销证据witness时间{}ms", time_end - time_start);
+        witness1.update(revocation_id1, max_element_num, revocation_registry_delta2, &simple_tail_accessor).unwrap();
+
+
+        let mut witness2 = Witness::new(revocation_id2, max_element_num, revocation_registry_delta2, &simple_tail_accessor).unwrap();
+        witness2.update(revocation_id2, max_element_num, revocation_registry_delta1, &simple_tail_accessor).unwrap();
+
+        Prover::check_revocation_credential(&mut non_revocation_credential_signature2,
+                                            &blinded_revocation_secrets, &credential_revocation_public_key, &accumulator_pub, &witness2);
+        Prover::store_non_revocation_credential(&mut non_revocation_credential_signature2, &blinded_revocation_secrets);
+        let non_revoc_init_proof2 = Prover::init_non_revocation_proof(&non_revocation_credential_signature2,
+                                                                      &accumulator_pub, &credential_revocation_public_key, &witness2).unwrap();
+        let proof_request_nonce2 = new_nonce().unwrap();
+        let mut values: Vec<Vec<u8>> = Vec::new();
+        values.extend_from_slice(&non_revoc_init_proof2.as_tau_list().unwrap());
+        values.extend_from_slice(&non_revoc_init_proof2.as_c_list().unwrap());
+        values.push(proof_request_nonce2.to_bytes().unwrap());
+        // In the anoncreds whitepaper, `challenge2` is denoted by `c_h`
+        let challenge2 = get_hash_as_int(&values).unwrap();
+        let non_revoc_proof2 = Prover::finalize_non_revocation_proof(&non_revoc_init_proof2, &challenge2).unwrap();
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let result = Verifier::verify(challenge2, &credential_revocation_public_key, &accumulator_pub, &non_revoc_proof2, &proof_request_nonce2).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        assert_eq!(result, true);
+        println!("Verifier验证第二个人未撤销证明时间{}ms", time_end - time_start);
+
+
+        let non_revoc_init_proof1 = Prover::init_non_revocation_proof(&non_revocation_credential_signature1,
+                                                                      &accumulator_pub, &credential_revocation_public_key, &witness1).unwrap();
+        let proof_request_nonce1 = new_nonce().unwrap();
+        let mut values: Vec<Vec<u8>> = Vec::new();
+        values.extend_from_slice(&non_revoc_init_proof1.as_tau_list().unwrap());
+        values.extend_from_slice(&non_revoc_init_proof1.as_c_list().unwrap());
+        values.push(proof_request_nonce1.to_bytes().unwrap());
+        // In the anoncreds whitepaper, `challenge2` is denoted by `c_h`
+        let challenge1 = get_hash_as_int(&values).unwrap();
+        let non_revoc_proof1 = Prover::finalize_non_revocation_proof(&non_revoc_init_proof1, &challenge1).unwrap();
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let result = Verifier::verify(challenge1, &credential_revocation_public_key, &accumulator_pub, &non_revoc_proof1, &proof_request_nonce1).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        assert_eq!(result, true);
+        println!("Verifier再次验证第一个人未撤销证明时间{}ms", time_end - time_start);
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let revocation_registry_delta1 = Issuer::delete_from_accumulaor(revocation_id1, max_element_num, &mut accumulator_pub, &simple_tail_accessor);
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("Issuer删除第一个人未撤销证明时间{}ms", time_end - time_start);
+
+        let non_revoc_init_proof1 = Prover::init_non_revocation_proof(&non_revocation_credential_signature1,
+                                                                      &accumulator_pub, &credential_revocation_public_key, &witness1).unwrap();
+        let proof_request_nonce1 = new_nonce().unwrap();
+        let mut values: Vec<Vec<u8>> = Vec::new();
+        values.extend_from_slice(&non_revoc_init_proof1.as_tau_list().unwrap());
+        values.extend_from_slice(&non_revoc_init_proof1.as_c_list().unwrap());
+        values.push(proof_request_nonce1.to_bytes().unwrap());
+        // In the anoncreds whitepaper, `challenge2` is denoted by `c_h`
+        let challenge1 = get_hash_as_int(&values).unwrap();
+        let non_revoc_proof1 = Prover::finalize_non_revocation_proof(&non_revoc_init_proof1, &challenge1).unwrap();
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let result = Verifier::verify(challenge1, &credential_revocation_public_key, &accumulator_pub, &non_revoc_proof1, &proof_request_nonce1).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        assert_eq!(result, false);
+        println!("Verifier再次验证第一个人未撤销证明时间{}ms，此时验证失败", time_end - time_start);
+
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+
+        let revocation_registry_delta1 = &revocation_registry_delta1.unwrap().unwrap();
+
+        let mut omega_denom = PointG2::new_inf().unwrap();
+        for j in revocation_registry_delta1.revoked.iter() {
+            if revocation_id2.eq(j) { continue; }
+
+
+            let index = max_element_num + 1 - j + revocation_id2;
+            simple_tail_accessor.access_tail(index, &mut |tail| {
+                omega_denom = omega_denom.add(tail).unwrap();
+            });
+        }
+        let time_end = chrono::Utc::now().timestamp_millis();
+        assert_eq!(result, false);
+        println!("Issuer更新simple_tail_accessor时间{}ms", time_end - time_start);
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        witness2.update(revocation_id2, max_element_num, revocation_registry_delta1, &simple_tail_accessor).unwrap();
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("witness2更新证明时间{}ms", time_end - time_start);
+
+        let non_revoc_init_proof2 = Prover::init_non_revocation_proof(&non_revocation_credential_signature2,
+                                                                      &accumulator_pub, &credential_revocation_public_key, &witness2).unwrap();
+        let proof_request_nonce2 = new_nonce().unwrap();
+        let mut values: Vec<Vec<u8>> = Vec::new();
+        values.extend_from_slice(&non_revoc_init_proof2.as_tau_list().unwrap());
+        values.extend_from_slice(&non_revoc_init_proof2.as_c_list().unwrap());
+        values.push(proof_request_nonce2.to_bytes().unwrap());
+        // In the anoncreds whitepaper, `challenge2` is denoted by `c_h`
+        let challenge2 = get_hash_as_int(&values).unwrap();
+        let non_revoc_proof2 = Prover::finalize_non_revocation_proof(&non_revoc_init_proof2, &challenge2).unwrap();
+
+        let time_start = chrono::Utc::now().timestamp_millis();
+        let result = Verifier::verify(challenge2, &credential_revocation_public_key, &accumulator_pub, &non_revoc_proof2, &proof_request_nonce2).unwrap();
+        assert_eq!(result, true);
+        let time_end = chrono::Utc::now().timestamp_millis();
+        println!("Verifier再次验证第一个人未撤销证明时间{}ms，此时验证成功", time_end - time_start);
+
+        println!("{}", "accumulator demo展示结束".red());
+    }
+
+    #[test]
     fn demo_accumulator() {
         println!("{}", "accumulator demo展示开始".green());
         pause();
 
         println!("{}", "Issuer初始化（需要指定最多证书个数），生成一个新的聚合器".green());
-        let max_element_num = 5;
+        let max_element_num = 100;
         println!("{}", "Issuer生成公私钥对".green());
         let (credential_revocation_public_key, credential_revocation_private_key) =
             Issuer::new_revocation_keys().unwrap();
@@ -949,8 +1220,13 @@ mod test {
         pause();
 
         println!("{}", "Verifier根据Prover发来的东西进行验证……".green());
+        let time1 = format!("{}", chrono::Utc::now().timestamp_millis());
+        let time1_int: i32 = time1.parse().unwrap();
         let result = Verifier::verify(challenge2, &credential_revocation_public_key, &accumulator_pub, &non_revoc_proof2, &proof_request_nonce2).unwrap();
         print!("{}", "第二个人验证结果= ".yellow());
+        let time2 = format!("{}", chrono::Utc::now().timestamp_millis());
+        let time2_int: i32 = time2.parse().unwrap();
+        println!("verify time = {}ms", time2_int - time1_int);
         println!("{:?}", result);
 
 

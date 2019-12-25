@@ -38,3 +38,4 @@ lazy_static = "1.0"
 wasm-bindgen = { version = "0.2", optional = true, features = ["serde-serialize"] }
 console_error_panic_hook = { version = "0.1.5", optional = true }
 colored = "1.8"
+chrono = "0.4"
